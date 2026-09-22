@@ -1,0 +1,26 @@
+# macOS metadata
+.DS_Store
+._*
+
+# Local Xcode state
+xcuserdata/
+*.xcuserstate
+
+# Xcode build products and test results
+DerivedData/
+/build/
+*.xcarchive/
+*.xcresult/
+*.ipa
+*.dSYM/
+*.dSYM.zip
+
+# Python helper-script caches
+__pycache__/
+*.py[cod]
+.venv/
+
+# Regenerable validation fixtures and private user media
+/validation/
+
+# Keep validation reports, logs, and screenshots referenced by docs tracked.
