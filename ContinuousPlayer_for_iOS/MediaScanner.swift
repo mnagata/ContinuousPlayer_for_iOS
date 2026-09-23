@@ -9,14 +9,19 @@ nonisolated enum MediaScanner {
 
     /// Keep ordinary name ordering, then order seasonal folders within each name prefix.
     static func sortFolders(_ folders: [URL]) -> [URL] {
+        sortFolders(folders, name: { $0.lastPathComponent })
+    }
+
+    /// DLNA folders use their server-provided title, not their opaque object ID or URL.
+    static func sortFolders<Folder>(_ folders: [Folder], name: (Folder) -> String) -> [Folder] {
         var sorted = folders.sorted {
-            $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending
+            name($0).localizedStandardCompare(name($1)) == .orderedAscending
         }
         let pattern = try! NSRegularExpression(pattern: #"^(.*?)([0-9]{4})\s*年?\s*([冬春夏秋])$"#)
         let seasons = ["冬": 0, "春": 1, "夏": 2, "秋": 3]
         var groups: [String: [(index: Int, year: Int, season: Int)]] = [:]
-        for (index, url) in sorted.enumerated() {
-            let name = url.lastPathComponent.trimmingCharacters(in: .whitespacesAndNewlines)
+        for (index, folder) in sorted.enumerated() {
+            let name = name(folder).trimmingCharacters(in: .whitespacesAndNewlines)
             guard let match = pattern.firstMatch(in: name, range: NSRange(name.startIndex..., in: name)) else { continue }
             func group(_ number: Int) -> String { String(name[Range(match.range(at: number), in: name)!]) }
             let prefix = group(1).trimmingCharacters(in: .whitespacesAndNewlines).lowercased()

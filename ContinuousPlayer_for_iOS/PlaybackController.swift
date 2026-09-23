@@ -10,6 +10,8 @@ final class PlaybackController {
     private(set) var error: String?
     private(set) var isLoading = false
     private(set) var mediaInfo = MediaInfo()
+    private var displayNames: [URL: String] = [:]
+    private var resourceSizes: [URL: Int64] = [:]
     private var preparation: Task<Void, Never>?
     private let logger = Logger(subsystem: "jp.nagu.ContinuousPlayer-for-iOS", category: "PlaybackStartup")
     private var statusObservation: NSKeyValueObservation?
@@ -116,10 +118,15 @@ final class PlaybackController {
         error = "フォルダーへのアクセスが失われました。フォルダーを再選択してください。"
     }
 
-    var currentName: String { state.currentURL?.lastPathComponent ?? "" }
+    var currentName: String {
+        guard let url = state.currentURL else { return "" }
+        return displayNames[url] ?? url.lastPathComponent
+    }
 
-    func setPlaylist(_ files: [URL]) {
+    func setPlaylist(_ files: [URL], displayNames: [URL: String] = [:], sizes: [URL: Int64] = [:]) {
         clearItem()
+        self.displayNames = displayNames
+        self.resourceSizes = sizes
         state.replace(files)
         needsFolderSelection = false
         pauseReason = nil
@@ -214,7 +221,7 @@ final class PlaybackController {
                 case .readyToPlay:
                     self.prepareCurrent(item, url: url, token: token)
                 case .failed:
-                    if Self.isAccessFailure(item.error) { self.accessFailed() }
+                    if url.isFileURL && Self.isAccessFailure(item.error) { self.accessFailed() }
                     else { self.handleFailure(item.error?.localizedDescription ?? "読み込めないファイルです。") }
                 default: break
                 }
@@ -235,7 +242,7 @@ final class PlaybackController {
                             self.watchdog?.cancel()
                             self.player.pause()
                         }
-                    } else if accessFailure { self.accessFailed() }
+                    } else if url.isFileURL && accessFailure { self.accessFailed() }
                     else { self.handleFailure(message ?? "再生中にエラーが発生しました。") }
                 }
             })
@@ -257,7 +264,9 @@ final class PlaybackController {
         timeout = Task { [weak self] in
             do { try await Task.sleep(for: .seconds(30)) } catch { return }
             guard let self, self.generation == token, self.isLoading else { return }
-            self.handleFailure("読み込みが30秒以内に完了しませんでした。")
+            self.handleFailure(url.isFileURL
+                ? "読み込みが30秒以内に完了しませんでした。"
+                : "読み込みが30秒以内に完了しませんでした。NASとネットワークの接続を確認してください。")
         }
         lastAdvance = .now
         watchdog = Task { [weak self] in
@@ -283,6 +292,10 @@ final class PlaybackController {
             let info = await MediaInfo.load(url, asset: item.asset)
             guard let self, !Task.isCancelled, self.generation == token else { return }
             self.mediaInfo = info
+            self.mediaInfo.name = self.currentName
+            if let size = self.resourceSizes[url] {
+                self.mediaInfo.size = ByteCountFormatter.string(fromByteCount: size, countStyle: .file)
+            }
             self.logger.info("Metadata ready; waiting for player readiness")
             // Item readiness and player readiness can be delivered in different callbacks.
             while self.player.status == .unknown {
@@ -319,7 +332,9 @@ final class PlaybackController {
         if !isBuffering, elapsed >= .seconds(2) { logger.notice("Playback stopped advancing for at least two seconds") }
         isBuffering = elapsed >= .seconds(2)
         if elapsed >= .seconds(30) {
-            handleFailure("再生が30秒間進みませんでした。外部ストレージの接続も確認してください。")
+            handleFailure(state.currentURL?.isFileURL == false
+                ? "再生が30秒間進みませんでした。NASとネットワークの接続を確認してください。"
+                : "再生が30秒間進みませんでした。外部ストレージの接続も確認してください。")
         }
     }
 

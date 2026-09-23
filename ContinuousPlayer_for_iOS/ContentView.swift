@@ -5,8 +5,9 @@ import UIKit
 struct ContentView: View {
     @State private var library = MediaLibrary()
     @AppStorage("useSystemFilePicker") private var useSystemFilePicker = false
+    @AppStorage("isDLNAEnabled") private var isDLNAEnabled = true
     private enum Presentation: String, Identifiable {
-        case folder, file, browser, player
+        case folder, file, browser, player, dlna
         var id: String { rawValue }
     }
     @State private var presentation: Presentation?
@@ -22,7 +23,10 @@ struct ContentView: View {
 
     var body: some View {
         NavigationStack {
-            HomeView(authorizationStatus: authorizationStatus, useSystemFilePicker: $useSystemFilePicker, authorize: beginAuthorization) {
+            HomeView(authorizationStatus: authorizationStatus,
+                     isDLNAEnabled: isDLNAEnabled, authorize: beginAuthorization, selectDLNA: {
+                if isDLNAEnabled { presentation = .dlna }
+            }) {
                 Task {
                     await beginSelection()
                 }
@@ -31,6 +35,21 @@ struct ContentView: View {
                 if library.isLoading { ProgressView("プレイリストを作成中…").padding().background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12)) }
             }
             .disabled(library.isLoading)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    NavigationLink {
+                        SettingsView(useSystemFilePicker: $useSystemFilePicker, isDLNAEnabled: $isDLNAEnabled)
+                    } label: {
+                        Label("設定", systemImage: "gearshape")
+                            .foregroundStyle(.white)
+                    }
+                    .tint(.white)
+                    .accessibilityIdentifier("home.settings")
+                }
+            }
+            .toolbarColorScheme(.dark, for: .navigationBar)
+            .toolbarBackground(Color(red: 0.06, green: 0.09, blue: 0.26), for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
             .navigationDestination(isPresented: $showingLibrary) {
                 PlaylistView(library: library, chooseFolder: beginAuthorization) { url in
                     library.playback.select(url, autoplay: false)
@@ -85,6 +104,8 @@ struct ContentView: View {
                         finishFolderSelectionIfReady()
                     }
                 }
+            case .dlna:
+                DLNABrowser()
             case .player:
                 PlayerScreen(playback: library.playback, folderName: library.folderName) {
                     lastPlaybackURL = library.playback.state.currentURL
@@ -184,8 +205,9 @@ struct ContentView: View {
 
 private struct HomeView: View {
     let authorizationStatus: String?
-    @Binding var useSystemFilePicker: Bool
+    let isDLNAEnabled: Bool
     let authorize: () -> Void
+    let selectDLNA: () -> Void
     let select: () -> Void
     var body: some View {
         GeometryReader { geometry in
@@ -219,13 +241,15 @@ private struct HomeView: View {
                     }
                     .buttonStyle(.plain).frame(maxWidth: 320)
                     .accessibilityIdentifier("home.select")
-                    Toggle("標準ファイルダイアログを使う", isOn: $useSystemFilePicker)
-                        .font(.subheadline)
-                        .frame(maxWidth: 360)
-                        .accessibilityIdentifier("home.useSystemFilePicker")
-                    Text("オフ：検索窓なしの一覧 ／ オン：従来の画面")
-                        .font(.caption).foregroundStyle(.secondary)
-                    Text("最初にUSBストレージへのアクセスを許可してください。\n保存した許可は次回も使用します。")
+                    if isDLNAEnabled {
+                        Button(action: selectDLNA) {
+                            Label("DLNAサーバーから選ぶ", systemImage: "network")
+                                .font(.headline).frame(maxWidth: .infinity).padding(.vertical, 14)
+                        }
+                        .buttonStyle(.bordered).frame(maxWidth: 360)
+                        .accessibilityIdentifier("home.selectDLNA")
+                    }
+                    Text("USB再生では最初にストレージへのアクセスを許可してください。\n保存した許可は次回も使用します。")
                         .font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center)
                 }
                 .padding(28)
@@ -234,6 +258,34 @@ private struct HomeView: View {
         }
         .foregroundStyle(.white)
         .background(LinearGradient(colors: [Color(red: 0.06, green: 0.09, blue: 0.26), Color(red: 0.08, green: 0.18, blue: 0.28), Color(red: 0.16, green: 0.09, blue: 0.30)], startPoint: .topLeading, endPoint: .bottomTrailing).ignoresSafeArea())
+    }
+}
+
+private struct SettingsView: View {
+    @Binding var useSystemFilePicker: Bool
+    @Binding var isDLNAEnabled: Bool
+
+    var body: some View {
+        Form {
+            Section {
+                Toggle("DLNA機能を使う", isOn: $isDLNAEnabled)
+                    .accessibilityIdentifier("settings.isDLNAEnabled")
+            } header: {
+                Text("DLNA")
+            } footer: {
+                Text("オンにすると、ホームに「DLNAサーバーから選ぶ」が表示されます。")
+            }
+            Section {
+                Toggle("標準ファイルダイアログを使う", isOn: $useSystemFilePicker)
+                    .accessibilityIdentifier("settings.useSystemFilePicker")
+            } header: {
+                Text("USBストレージのファイル選択")
+            } footer: {
+                Text("オフ：検索窓のないアプリ内一覧を使います。\nオン：標準ファイルダイアログを使います。")
+            }
+        }
+        .navigationTitle("設定")
+        .navigationBarTitleDisplayMode(.inline)
     }
 }
 

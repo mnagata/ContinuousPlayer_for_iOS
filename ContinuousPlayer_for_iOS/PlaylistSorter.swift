@@ -8,8 +8,10 @@ nonisolated enum PlaylistSorter {
         let category: Int
     }
 
-    static func parse(_ name: String) -> OpEd? {
-        let stem = (name as NSString).deletingPathExtension.trimmingCharacters(in: .whitespacesAndNewlines)
+    static func parse(_ name: String, isTitle: Bool = false) -> OpEd? {
+        // DLNA titles may omit the extension but still contain periods (e.g. SSSS.GRIDMAN OP).
+        let stripExtension = !isTitle || ["mp4", "m4v"].contains((name as NSString).pathExtension.lowercased())
+        let stem = (stripExtension ? (name as NSString).deletingPathExtension : name).trimmingCharacters(in: .whitespacesAndNewlines)
         // ASCII digits match Java's default regex semantics.
         let expression = try! NSRegularExpression(pattern: #"^(.+?)\s+(OP|ED)([0-9]*)$"#, options: .caseInsensitive)
         guard let match = expression.firstMatch(in: stem, range: NSRange(stem.startIndex..., in: stem)),
@@ -20,15 +22,19 @@ nonisolated enum PlaylistSorter {
     }
 
     static func sort(_ files: [URL], locale: Locale = .current) -> [URL] {
+        sort(files, name: { $0.lastPathComponent }, locale: locale)
+    }
+
+    static func sort<Item>(_ files: [Item], name: (Item) -> String, namesAreTitles: Bool = false, locale: Locale = .current) -> [Item] {
         // No numeric option: Android's Collator compares ordinary names lexically.
         var result = files.enumerated().sorted {
-            let order = $0.element.lastPathComponent.compare($1.element.lastPathComponent,
+            let order = name($0.element).compare(name($1.element),
                 options: .caseInsensitive, locale: locale)
             return order == .orderedSame ? $0.offset < $1.offset : order == .orderedAscending
         }.map(\.element)
         var groups: [String: [(index: Int, info: OpEd)]] = [:]
         for (index, file) in result.enumerated() {
-            if let info = parse(file.lastPathComponent) {
+            if let info = parse(name(file), isTitle: namesAreTitles) {
                 groups[info.base, default: []].append((index, info))
             }
         }

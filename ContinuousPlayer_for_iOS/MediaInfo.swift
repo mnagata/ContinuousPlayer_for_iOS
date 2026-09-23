@@ -9,7 +9,7 @@ struct MediaInfo {
     static func load(_ url: URL, asset: AVAsset) async -> MediaInfo {
         var info = MediaInfo(name: url.lastPathComponent)
         let bytes = await Task.detached(priority: .utility) {
-            try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize
+            url.isFileURL ? try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize : nil
         }.value
         guard !Task.isCancelled else { return info }
         if let bytes {
