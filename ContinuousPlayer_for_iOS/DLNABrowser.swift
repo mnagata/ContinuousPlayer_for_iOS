@@ -6,6 +6,8 @@ struct DLNABrowser: View {
     @State private var playback = PlaybackController()
     @State private var selection: Selection?
     @State private var returnHome = false
+    @State private var folderPath: [Folder] = []
+    @State private var lastSelections: [Folder: String] = [:]
     private let client = DLNAClient()
 
     private struct Selection: Identifiable {
@@ -19,14 +21,18 @@ struct DLNABrowser: View {
     }
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $folderPath) {
             DLNAServersView(client: client) { server in
                 Folder(server: server, objectID: "0", title: server.name)
             }
             .navigationDestination(for: Folder.self) { folder in
                 DLNAFolderView(client: client, server: folder.server, objectID: folder.objectID,
-                               title: folder.title, destination: { entry in
-                    Folder(server: folder.server, objectID: entry.id, title: entry.title)
+                               title: folder.title,
+                               lastSelectionID: Binding(get: { lastSelections[folder] },
+                                                        set: { lastSelections[folder] = $0 }),
+                               openFolder: { entry in
+                    lastSelections[folder] = entry.id
+                    folderPath.append(Folder(server: folder.server, objectID: entry.id, title: entry.title))
                 }) { entries, selected in
                     var urls: [URL] = []
                     var names: [URL: String] = [:]
@@ -51,7 +57,7 @@ struct DLNABrowser: View {
             playback.setPlaylist([])
             if returnHome { dismiss() }
         }) { selection in
-            PlayerScreen(playback: playback, folderName: selection.folderName) {
+            playerScreen(playback: playback, folderName: selection.folderName) {
                 playback.pause()
                 returnHome = true
                 self.selection = nil
@@ -63,12 +69,26 @@ struct DLNABrowser: View {
         .onChange(of: scenePhase, initial: true) { _, phase in playback.setActive(phase == .active) }
     }
 
+    @ViewBuilder
+    private func playerScreen(playback: PlaybackController, folderName: String,
+                              home: @escaping () -> Void, chooseFolder: @escaping () -> Void) -> some View {
+        #if os(tvOS)
+        TVPlayerScreen(playback: playback, folderName: folderName, home: home, chooseFolder: chooseFolder)
+            .presentationBackground(.black)
+        #else
+        PlayerScreen(playback: playback, folderName: folderName, home: home, chooseFolder: chooseFolder)
+        #endif
+    }
+
     @ToolbarContentBuilder
     private var cancelToolbar: some ToolbarContent {
         ToolbarItem(placement: .topBarLeading) {
             // Dismiss the entire picker, even when a nested folder is displayed.
-            Button("キャンセル", role: .cancel) { dismiss() }
+            Button(role: .cancel) { dismiss() } label: {
+                Text("キャンセル").dlnaToolbarLabelStyle()
+            }
                 .accessibilityIdentifier("dlna.cancel")
+                .dlnaToolbarButtonStyle()
         }
     }
 }
@@ -103,6 +123,7 @@ private struct DLNAServersView<Destination: Hashable>: View {
                         .focused($editingAddress)
                         .submitLabel(.go)
                         .onSubmit { connect() }
+                        .dlnaAddressFieldStyle(isFocused: editingAddress)
                     if !address.isEmpty {
                         Button {
                             address = ""
@@ -138,10 +159,15 @@ private struct DLNAServersView<Destination: Hashable>: View {
                             .accessibilityIdentifier("dlna.connectionErrorTitle")
                         Text(connectionError.guidance).font(.subheadline)
                             .accessibilityIdentifier("dlna.connectionErrorGuidance")
+                        #if os(tvOS)
+                        Text(connectionError.details).font(.caption)
+                            .accessibilityIdentifier("dlna.connectionErrorDetails")
+                        #else
                         DisclosureGroup("接続エラーの詳細") {
                             Text(connectionError.details).font(.caption).textSelection(.enabled)
                                 .accessibilityIdentifier("dlna.connectionErrorDetails")
                         }
+                        #endif
                     }
                 }
                 if !savedAddress.isEmpty {
@@ -154,10 +180,12 @@ private struct DLNAServersView<Destination: Hashable>: View {
                     }
                     .disabled(isConnecting)
                 }
-            } header: { Text("Synology NASに接続") }
+            } header: { Text("Synology NASに接続").dlnaSectionHeadingStyle() }
             footer: {
                 Text("SynologyではIPアドレスだけで接続できます（標準ポート50001）。ポートを指定する場合は「192.168.1.10:50001」の形式で入力してください。接続先は保存されます。ほかのDLNAサーバーはデバイス記述XMLのURLを入力できます。")
+                    .dlnaSupportingTextStyle()
             }
+            .dlnaSettingsSectionStyle()
             Section {
                 ForEach(servers) { server in
                     NavigationLink(value: destination(server)) {
@@ -179,17 +207,22 @@ private struct DLNAServersView<Destination: Hashable>: View {
                         .foregroundStyle(.secondary)
                         .accessibilityIdentifier("dlna.directConnectionNotice")
                 }
-            } header: { Text("サーバー") }
+            } header: { Text("サーバー").dlnaSectionHeadingStyle() }
             footer: {
                 Text("初回はローカルネットワークへのアクセスを許可してください。拒否した場合は、設定アプリのContinuousPlayerで許可できます。")
+                    .dlnaSupportingTextStyle()
             }
+            .dlnaSettingsSectionStyle()
             Section {
                 Text("NASと同じネットワークに接続してください。Synologyでは、対象フォルダーのメディアインデックス登録と、メディアサーバーのDMAデバイスへのアクセス許可も確認してください。")
                     .font(.footnote)
             }
+            .dlnaSettingsSectionStyle()
         }
+        .dlnaServerListStyle()
         .navigationTitle("DLNAサーバー")
-        .navigationBarTitleDisplayMode(.inline)
+        .dlnaNavigationTitleStyle()
+        .dlnaBrowserBackground()
         .task {
             guard connection == nil, !savedAddress.isEmpty else { return }
             address = savedAddress
@@ -265,52 +298,78 @@ private struct DLNAServersView<Destination: Hashable>: View {
     }
 }
 
-private struct DLNAFolderView<Destination: Hashable>: View {
+private struct DLNAFolderView: View {
     let client: DLNAClient
     let server: DLNAServer
     let objectID: String
     let title: String
-    let destination: (DLNAEntry) -> Destination
+    @Binding var lastSelectionID: String?
+    let openFolder: (DLNAEntry) -> Void
     let play: ([DLNAEntry], DLNAEntry) -> Void
     @State private var entries: [DLNAEntry] = []
     @State private var isLoading = true
     @State private var error: String?
     @State private var refreshID = UUID()
+    @State private var loadedRefreshID: UUID?
+    @FocusState private var focusedEntryID: String?
     private var folders: [DLNAEntry] { entries.filter(\.isContainer) }
     private var playable: [DLNAEntry] { entries.filter { !$0.isContainer && $0.resourceURL != nil } }
 
     var body: some View {
-        List {
-            if isLoading {
-                ProgressView("フォルダーを読み込み中…")
-            } else if let error {
-                Text(error).foregroundStyle(.orange)
-            } else {
-                if !folders.isEmpty {
-                    Section("フォルダー") {
-                        ForEach(folders) { entry in
-                            NavigationLink(value: destination(entry)) { Label(entry.title, systemImage: "folder") }
+        ScrollViewReader { proxy in
+            List {
+                if isLoading {
+                    ProgressView("フォルダーを読み込み中…")
+                } else if let error {
+                    Text(error).foregroundStyle(.orange)
+                } else {
+                    if !folders.isEmpty {
+                        Section("フォルダー") {
+                            ForEach(folders) { entry in
+                                Button { openFolder(entry) } label: {
+                                    Label(entry.title, systemImage: "folder")
+                                }
+                                .id(entry.id)
+                                .focused($focusedEntryID, equals: entry.id)
+                            }
                         }
                     }
-                }
-                if !playable.isEmpty {
-                    Section {
-                        ForEach(playable) { entry in
-                            Button { play(playable, entry) } label: {
-                                Label(entry.title, systemImage: "play.circle")
-                                    .frame(maxWidth: .infinity, alignment: .leading)
+                    if !playable.isEmpty {
+                        Section {
+                            ForEach(playable) { entry in
+                                Button {
+                                    lastSelectionID = entry.id
+                                    play(playable, entry)
+                                } label: {
+                                    Label(entry.title, systemImage: "play.circle")
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                }
+                                .id(entry.id)
+                                .focused($focusedEntryID, equals: entry.id)
+                                .accessibilityLabel("\(entry.title)から連続再生")
                             }
-                            .accessibilityLabel("\(entry.title)から連続再生")
-                        }
-                    } header: { Text("\(playable.count)件 · OP / ED順") }
-                    footer: { Text("選んだファイルから、このフォルダーのMP4／M4Vを最後まで再生します。") }
-                } else {
-                    Text("この階層には再生対象のMP4／M4Vがありません。")
-                        .foregroundStyle(.secondary)
+                        } header: { Text("\(playable.count)件 · OP / ED順") }
+                        footer: { Text("選んだファイルから、このフォルダーのMP4／M4Vを最後まで再生します。") }
+                    } else {
+                        Text("この階層には再生対象のMP4／M4Vがありません。")
+                            .foregroundStyle(.secondary)
+                    }
                 }
             }
+            .task(id: isLoading) {
+                // NavigationStack may recreate the parent; restore by the server's stable object ID.
+                guard !isLoading, error == nil, let id = lastSelectionID,
+                      entries.contains(where: { $0.id == id }) else { return }
+                await Task.yield()
+                guard !Task.isCancelled else { return }
+                proxy.scrollTo(id, anchor: .center)
+                await Task.yield()
+                guard !Task.isCancelled else { return }
+                focusedEntryID = id
+            }
         }
-        .navigationTitle(title).navigationBarTitleDisplayMode(.inline)
+        .navigationTitle(title).dlnaNavigationTitleStyle()
+        .dlnaBrowserBackground()
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button("再読み込み", systemImage: "arrow.clockwise") { refreshID = UUID() }
@@ -318,6 +377,8 @@ private struct DLNAFolderView<Destination: Hashable>: View {
             }
         }
         .task(id: refreshID) {
+            // Keep the populated list when popping back; explicit reload still fetches fresh data.
+            guard loadedRefreshID != refreshID else { return }
             isLoading = true
             error = nil
             defer { isLoading = false }
@@ -327,6 +388,7 @@ private struct DLNAFolderView<Destination: Hashable>: View {
                 let folders = MediaScanner.sortFolders(result.filter(\.isContainer), name: { $0.title })
                 let files = PlaylistSorter.sort(result.filter { !$0.isContainer }, name: { $0.title }, namesAreTitles: true)
                 entries = folders + files
+                loadedRefreshID = refreshID
             } catch {
                 if !Task.isCancelled { self.error = error.localizedDescription }
             }
@@ -335,3 +397,94 @@ private struct DLNAFolderView<Destination: Hashable>: View {
 }
 
 #Preview("DLNAサーバー") { DLNABrowser() }
+
+private extension View {
+    @ViewBuilder
+    func dlnaSettingsSectionStyle() -> some View {
+        #if os(tvOS)
+        listRowBackground(Color.white)
+        #else
+        self
+        #endif
+    }
+
+    @ViewBuilder
+    func dlnaToolbarButtonStyle() -> some View {
+        #if os(tvOS)
+        buttonStyle(.borderedProminent).tint(.blue)
+        #else
+        self
+        #endif
+    }
+
+    @ViewBuilder
+    func dlnaSupportingTextStyle() -> some View {
+        #if os(tvOS)
+        font(.footnote)
+            .foregroundStyle(Color(white: 0.35))
+        #else
+        self
+        #endif
+    }
+
+    @ViewBuilder
+    func dlnaServerListStyle() -> some View {
+        #if os(tvOS)
+        listStyle(.grouped)
+            .frame(maxWidth: 1320)
+            .frame(maxWidth: .infinity)
+        #else
+        self
+        #endif
+    }
+
+    @ViewBuilder
+    func dlnaToolbarLabelStyle() -> some View {
+        #if os(tvOS)
+        foregroundStyle(.black)
+        #else
+        self
+        #endif
+    }
+
+    @ViewBuilder
+    func dlnaSectionHeadingStyle() -> some View {
+        #if os(tvOS)
+        foregroundStyle(Color(white: 0.25))
+        #else
+        self
+        #endif
+    }
+
+    @ViewBuilder
+    func dlnaBrowserBackground() -> some View {
+        #if os(tvOS)
+        background(Color(white: 0.94))
+        #else
+        self
+        #endif
+    }
+
+    @ViewBuilder
+    func dlnaAddressFieldStyle(isFocused: Bool) -> some View {
+        #if os(tvOS)
+        padding(12)
+            .background(.white, in: RoundedRectangle(cornerRadius: 14))
+            .overlay {
+                RoundedRectangle(cornerRadius: 14)
+                    .strokeBorder(isFocused ? Color.blue : Color(white: 0.5), lineWidth: isFocused ? 4 : 2)
+            }
+        #else
+        self
+        #endif
+    }
+
+    @ViewBuilder
+    func dlnaNavigationTitleStyle() -> some View {
+        #if os(tvOS)
+        self
+        #else
+        navigationBarTitleDisplayMode(.inline)
+        #endif
+    }
+}

@@ -6,7 +6,10 @@ nonisolated enum DLNADiscovery {
         #if DEBUG
         if ProcessInfo.processInfo.arguments.contains("--ui-dlna-direct-only") { return false }
         #endif
-        #if os(iOS) && !targetEnvironment(simulator)
+        #if os(tvOS)
+        // The first TV release uses the saved NAS address, without SSDP discovery.
+        return false
+        #elseif os(iOS) && !targetEnvironment(simulator)
         // The approved build configuration enables discovery and its entitlement together.
         return (Bundle.main.object(forInfoDictionaryKey: "DLNAMulticastEnabled") as? String)?.uppercased() == "YES"
         #else

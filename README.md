@@ -279,3 +279,56 @@ ContinuousPlayer_for_iOS/
 - Xcodeプロジェクト、XCTestによるUIテスト
 
 詳細は [列挙と整列](docs/enumeration-and-sorting.md)、[連続再生](docs/continuous-playback.md)、[状態管理](docs/state-management.md) を参照してください。
+
+## Apple TV / tvOS版
+
+`ContinuousPlayer_for_tvOS` ターゲット／共有スキームで、tvOS 26.0以降のApple TVに対応しています。
+再生処理、DLNA通信、OP／ED順と季節フォルダーの並べ替えはiOS版と共通です。
+テレビ向けのホーム画面、再生画面、アプリアイコンとトップシェルフ画像を追加しています。
+
+### 接続と再生
+
+1. Apple TVとNASを同じネットワークに接続します。
+2. 「DLNAサーバーから選ぶ」を開き、NASのIPアドレスを入力して「接続」を選びます。
+3. サーバー → フォルダー → 動画の順に選択します。選んだ動画から同じ階層のMP4／M4VをOP／ED順に連続再生します。
+
+接続に成功したNASのアドレスは保存され、次回一覧を開くと再接続します。
+初期版はアドレス指定での接続のみです。SSDP自動検索、USBストレージ、標準ファイルダイアログには対応しません。
+コーデックの対応範囲はApple TVとOSに依存し、NASでの変換には依存しません。
+
+### Siri Remoteの操作
+
+| 操作 | 動作 |
+|---|---|
+| 再生／停止ボタン | 再生／一時停止。一時停止時は操作ボタンを表示 |
+| 映像表示中の左スワイプ | 前の動画（prev） |
+| 映像表示中の右スワイプ | 次の動画（next） |
+| 映像表示中の左右タップ／左右ボタン | 反応しない |
+| 映像表示中の選択・上下 | 操作ボタンを表示 |
+| 操作ボタン表示中の方向・選択 | ボタンを選んで実行。前後の動画、10秒シーク、情報表示など |
+| 戻る（旧リモコンのMenu） | 映像表示中は操作表示、操作表示中は直前のDLNA一覧へ戻る |
+| 「映像に戻る」 | 再生を続けたまま操作ボタンを閉じる |
+
+リモコンの戻る操作で親フォルダーへ戻ると、直前に開いていたフォルダーが画面中央付近に表示され、その行に選択が戻ります。複数階層でも親フォルダーごとに位置を記憶します。再生画面から一覧へ戻った場合も、選択したファイルの位置を復元します。位置の記憶はブラウザーを開いている間のみで、アプリ再起動後には保存しません。
+
+最後の動画で停止します。エラー時の次ファイルへの移動と連続失敗時の停止はiOS版と共通です。
+非アクティブ化や音声の割り込み時は一時停止し、復帰後は手動で再開します。
+
+### ビルドと検証
+
+Xcodeで `ContinuousPlayer_for_tvOS` スキームとApple TVの実機またはシミュレーターを選択します。
+実機ではtvOS用の署名設定が必要です。iOS版とは別のBundle IDを使用します。
+
+```sh
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcodebuild \
+  -project ContinuousPlayer_for_iOS.xcodeproj \
+  -scheme ContinuousPlayer_for_tvOS \
+  -destination 'generic/platform=tvOS Simulator' \
+  -derivedDataPath /tmp/ContinuousPlayer-tvOS build CODE_SIGNING_ALLOWED=NO
+
+# ローカル模擬NASと合成動画を使ったSiri Remote操作・連続再生テスト
+SIMULATOR_ID=<Apple-TVシミュレーターUDID> sh scripts/test-tvos-ui.sh
+```
+
+実機のNAS接続、ローカルネットワーク許可、HDMI音声と実際のSiri Remoteの操作感は、Apple TV実機で別途確認してください。
+アイコン画像は既存のベクター図形を使い、`scripts/generate-tv-brand-assets.swift` で再生成できます。

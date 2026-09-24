@@ -7,6 +7,13 @@
 	objects = {
 
 /* Begin PBXContainerItemProxy section */
+		A30000000000000000000000B /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 8804D4C2305E88610026CA06 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A200000000000000000000001;
+			remoteInfo = ContinuousPlayer_for_tvOS;
+		};
 		F10000000000000000000000B /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = 8804D4C2305E88610026CA06 /* Project object */;
@@ -18,13 +25,47 @@
 
 /* Begin PBXFileReference section */
 		8804D4CA305E88610026CA06 /* ContinuousPlayer_for_iOS.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ContinuousPlayer_for_iOS.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A200000000000000000000002 /* ContinuousPlayer_for_tvOS.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ContinuousPlayer_for_tvOS.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A300000000000000000000002 /* TVUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; path = TVUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		F100000000000000000000002 /* DeviceUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; path = DeviceUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		A20000000000000000000000A /* Exceptions for "ContinuousPlayer_for_iOS" folder in "ContinuousPlayer_for_tvOS" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Assets.xcassets,
+				ContentView.swift,
+				ContinuousPlayer_for_iOSApp.swift,
+				LaunchScreen.storyboard,
+				MediaFileBrowser.swift,
+				MediaLibrary.swift,
+				MediaValidationSession.swift,
+				PlaybackSurface.swift,
+				PlayerScreen.swift,
+				ValidationView.swift,
+			);
+			target = A200000000000000000000001 /* ContinuousPlayer_for_tvOS */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		8804D4CC305E88610026CA06 /* ContinuousPlayer_for_iOS */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				A20000000000000000000000A /* Exceptions for "ContinuousPlayer_for_iOS" folder in "ContinuousPlayer_for_tvOS" target */,
+			);
 			path = ContinuousPlayer_for_iOS;
+			sourceTree = "<group>";
+		};
+		A200000000000000000000003 /* ContinuousPlayer_for_tvOS */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = ContinuousPlayer_for_tvOS;
+			sourceTree = "<group>";
+		};
+		A300000000000000000000003 /* TVUITests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = TVUITests;
 			sourceTree = "<group>";
 		};
 		F100000000000000000000003 /* DeviceUITests */ = {
@@ -40,6 +81,16 @@
 			files = (
 			);
 		};
+		A200000000000000000000005 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			files = (
+			);
+		};
+		A300000000000000000000005 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			files = (
+			);
+		};
 		F100000000000000000000005 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			files = (
@@ -51,7 +102,9 @@
 		8804D4C1305E88610026CA06 = {
 			isa = PBXGroup;
 			children = (
+				A300000000000000000000003 /* TVUITests */,
 				8804D4CC305E88610026CA06 /* ContinuousPlayer_for_iOS */,
+				A200000000000000000000003 /* ContinuousPlayer_for_tvOS */,
 				F100000000000000000000003 /* DeviceUITests */,
 				8804D4CB305E88610026CA06 /* Products */,
 			);
@@ -61,7 +114,9 @@
 			isa = PBXGroup;
 			children = (
 				8804D4CA305E88610026CA06 /* ContinuousPlayer_for_iOS.app */,
+				A200000000000000000000002 /* ContinuousPlayer_for_tvOS.app */,
 				F100000000000000000000002 /* DeviceUITests.xctest */,
+				A300000000000000000000002 /* TVUITests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -86,6 +141,46 @@
 			productName = ContinuousPlayer_for_iOS;
 			productReference = 8804D4CA305E88610026CA06 /* ContinuousPlayer_for_iOS.app */;
 			productType = "com.apple.product-type.application";
+		};
+		A200000000000000000000001 /* ContinuousPlayer_for_tvOS */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A200000000000000000000007 /* Build configuration list for PBXNativeTarget "ContinuousPlayer_for_tvOS" */;
+			buildPhases = (
+				A200000000000000000000004 /* Sources */,
+				A200000000000000000000005 /* Frameworks */,
+				A200000000000000000000006 /* Resources */,
+			);
+			buildRules = (
+			);
+			fileSystemSynchronizedGroups = (
+				8804D4CC305E88610026CA06 /* ContinuousPlayer_for_iOS */,
+				A200000000000000000000003 /* ContinuousPlayer_for_tvOS */,
+			);
+			name = ContinuousPlayer_for_tvOS;
+			productName = ContinuousPlayer_for_tvOS;
+			productReference = A200000000000000000000002 /* ContinuousPlayer_for_tvOS.app */;
+			productType = "com.apple.product-type.application";
+		};
+		A300000000000000000000001 /* TVUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A300000000000000000000007 /* Build configuration list for PBXNativeTarget "TVUITests" */;
+			buildPhases = (
+				A300000000000000000000004 /* Sources */,
+				A300000000000000000000005 /* Frameworks */,
+				A300000000000000000000006 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				A30000000000000000000000A /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				A300000000000000000000003 /* TVUITests */,
+			);
+			name = TVUITests;
+			productName = TVUITests;
+			productReference = A300000000000000000000002 /* TVUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
 		};
 		F100000000000000000000001 /* DeviceUITests */ = {
 			isa = PBXNativeTarget;
@@ -137,6 +232,8 @@
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
+				A300000000000000000000001 /* TVUITests */,
+				A200000000000000000000001 /* ContinuousPlayer_for_tvOS */,
 				F100000000000000000000001 /* DeviceUITests */,
 				8804D4C9305E88610026CA06 /* ContinuousPlayer_for_iOS */,
 			);
@@ -145,6 +242,16 @@
 
 /* Begin PBXResourcesBuildPhase section */
 		8804D4C8305E88610026CA06 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			files = (
+			);
+		};
+		A200000000000000000000006 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			files = (
+			);
+		};
+		A300000000000000000000006 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			files = (
 			);
@@ -162,6 +269,16 @@
 			files = (
 			);
 		};
+		A200000000000000000000004 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			files = (
+			);
+		};
+		A300000000000000000000004 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			files = (
+			);
+		};
 		F100000000000000000000004 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			files = (
@@ -170,6 +287,11 @@
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
+		A30000000000000000000000A /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A200000000000000000000001 /* ContinuousPlayer_for_tvOS */;
+			targetProxy = A30000000000000000000000B /* PBXContainerItemProxy */;
+		};
 		F10000000000000000000000A /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			target = 8804D4C9305E88610026CA06 /* ContinuousPlayer_for_iOS */;
@@ -305,14 +427,16 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = Configuration/App.entitlements;
-				DLNA_MULTICAST_ENABLED = NO;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = K7V7BLTM88;
+				DLNA_MULTICAST_ENABLED = NO;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "Configuration/App-Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = ContinuousPlayer;
+				INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace = YES;
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "NASのDLNAメディアサーバーを検索し、動画を再生するためにローカルネットワークへ接続します。";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchStoryboardName = LaunchScreen;
@@ -341,14 +465,16 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = Configuration/App.entitlements;
-				DLNA_MULTICAST_ENABLED = NO;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = K7V7BLTM88;
+				DLNA_MULTICAST_ENABLED = NO;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "Configuration/App-Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = ContinuousPlayer;
+				INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace = YES;
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "NASのDLNAメディアサーバーを検索し、動画を再生するためにローカルネットワークへ接続します。";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchStoryboardName = LaunchScreen;
@@ -368,6 +494,104 @@
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		A200000000000000000000008 /* Debug configuration for PBXNativeTarget "ContinuousPlayer_for_tvOS" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = TVBrand;
+				CODE_SIGN_ENTITLEMENTS = Configuration/App.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = K7V7BLTM88;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "Configuration/TV-Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = ContinuousPlayer;
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "jp.nagu.ContinuousPlayer-for-tvOS";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = appletvos;
+				SUPPORTED_PLATFORMS = "appletvos appletvsimulator";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 3;
+				TVOS_DEPLOYMENT_TARGET = 26.0;
+			};
+			name = Debug;
+		};
+		A200000000000000000000009 /* Release configuration for PBXNativeTarget "ContinuousPlayer_for_tvOS" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = TVBrand;
+				CODE_SIGN_ENTITLEMENTS = Configuration/App.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = K7V7BLTM88;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "Configuration/TV-Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = ContinuousPlayer;
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "jp.nagu.ContinuousPlayer-for-tvOS";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = appletvos;
+				SUPPORTED_PLATFORMS = "appletvos appletvsimulator";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 3;
+				TVOS_DEPLOYMENT_TARGET = 26.0;
+			};
+			name = Release;
+		};
+		A300000000000000000000008 /* Debug configuration for PBXNativeTarget "TVUITests" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = K7V7BLTM88;
+				GENERATE_INFOPLIST_FILE = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = "jp.nagu.ContinuousPlayer-for-tvOS.TVUITests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = appletvos;
+				SUPPORTED_PLATFORMS = "appletvos appletvsimulator";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 3;
+				TEST_TARGET_NAME = ContinuousPlayer_for_tvOS;
+				TVOS_DEPLOYMENT_TARGET = 26.0;
+			};
+			name = Debug;
+		};
+		A300000000000000000000009 /* Release configuration for PBXNativeTarget "TVUITests" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = K7V7BLTM88;
+				GENERATE_INFOPLIST_FILE = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = "jp.nagu.ContinuousPlayer-for-tvOS.TVUITests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = appletvos;
+				SUPPORTED_PLATFORMS = "appletvos appletvsimulator";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 3;
+				TEST_TARGET_NAME = ContinuousPlayer_for_tvOS;
+				TVOS_DEPLOYMENT_TARGET = 26.0;
 			};
 			name = Release;
 		};
@@ -415,6 +639,22 @@
 			buildConfigurations = (
 				8804D4D6305E88620026CA06 /* Debug configuration for PBXNativeTarget "ContinuousPlayer_for_iOS" */,
 				8804D4D7305E88620026CA06 /* Release configuration for PBXNativeTarget "ContinuousPlayer_for_iOS" */,
+			);
+			defaultConfigurationName = Release;
+		};
+		A200000000000000000000007 /* Build configuration list for PBXNativeTarget "ContinuousPlayer_for_tvOS" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A200000000000000000000008 /* Debug configuration for PBXNativeTarget "ContinuousPlayer_for_tvOS" */,
+				A200000000000000000000009 /* Release configuration for PBXNativeTarget "ContinuousPlayer_for_tvOS" */,
+			);
+			defaultConfigurationName = Release;
+		};
+		A300000000000000000000007 /* Build configuration list for PBXNativeTarget "TVUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A300000000000000000000008 /* Debug configuration for PBXNativeTarget "TVUITests" */,
+				A300000000000000000000009 /* Release configuration for PBXNativeTarget "TVUITests" */,
 			);
 			defaultConfigurationName = Release;
 		};

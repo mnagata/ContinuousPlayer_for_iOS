@@ -3,13 +3,13 @@
 <plist version="1.0">
 <dict>
 	<key>DLNAMulticastEnabled</key>
-	<string>$(DLNA_MULTICAST_ENABLED)</string>
+	<string>NO</string>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
-	<key>UIFileSharingEnabled</key>
-	<true/>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>NASのDLNAメディアサーバーを検索し、動画を再生するためにローカルネットワークへ接続します。</string>
 </dict>
 </plist>

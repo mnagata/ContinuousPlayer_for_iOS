@@ -33,7 +33,7 @@ final class PlaybackController {
     }
 
     init() {
-        #if os(iOS)
+        #if os(iOS) || os(tvOS)
         let center = NotificationCenter.default
         systemNotifications.append(center.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: .main) { [weak self] notification in
             let began = (notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt) == AVAudioSession.InterruptionType.began.rawValue
@@ -83,7 +83,7 @@ final class PlaybackController {
             return
         }
         guard !isLoading, state.wantsToPlay else { return }
-        #if os(iOS)
+        #if os(iOS) || os(tvOS)
         do {
             let session = AVAudioSession.sharedInstance()
             try session.setCategory(.playback, mode: .moviePlayback)

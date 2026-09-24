@@ -257,7 +257,7 @@ private struct HomeView: View {
             }
         }
         .foregroundStyle(.white)
-        .background(LinearGradient(colors: [Color(red: 0.06, green: 0.09, blue: 0.26), Color(red: 0.08, green: 0.18, blue: 0.28), Color(red: 0.16, green: 0.09, blue: 0.30)], startPoint: .topLeading, endPoint: .bottomTrailing).ignoresSafeArea())
+        .background(HomeAppearance.background.ignoresSafeArea())
     }
 }
 
