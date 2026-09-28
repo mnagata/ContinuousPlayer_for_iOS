@@ -280,6 +280,35 @@ ContinuousPlayer_for_iOS/
 
 詳細は [列挙と整列](docs/enumeration-and-sorting.md)、[連続再生](docs/continuous-playback.md)、[状態管理](docs/state-management.md) を参照してください。
 
+## Mac Catalyst版
+
+iOSターゲットのMac Catalyst対応を有効にしています。iOS／tvOS版と再生・DLNA・並べ替え処理を共有し、iPad版の画面とキーボード操作をMacでも使用します。対応OSはmacOS 26.0以降です。
+
+Xcodeでは `ContinuousPlayer_for_iOS` スキームで実行先を **My Mac (Mac Catalyst)** にしてRunします。「Designed for iPad」の実行先とは異なります。
+
+ローカル開発用のビルドと起動は、次のスクリプトでも実行できます。CodexのRunボタンも同じスクリプトを使います。
+
+```sh
+./script/build_and_run.sh
+# 起動プロセスの確認まで行う
+./script/build_and_run.sh --verify
+# ビルドのみ
+./script/build_and_run.sh --build-only
+```
+
+ビルド先は `/tmp/ContinuousPlayer-Catalyst` です。`BUILD_DIR` と `DEVELOPER_DIR` で変更できます。スクリプトはローカル開発用のアドホック署名を使用します。配布する場合はXcodeでMac向けの署名と配布設定を行ってください。
+
+- Mac版の「再生フォルダーを登録」では、標準ファイルダイアログでフォルダーを選び、連続再生に必要なアクセス許可を保存します。登録だけでは再生を開始しません。続けて「OP / EDを選ぶ」から開始ファイルを選択します。アプリ内一覧／標準ダイアログの切り替え設定はMac版には表示しません。
+- 選んだファイルと同じフォルダーを読み取れる場合は、そのまま連続再生します。サンドボックスの権限が足りない場合だけ、案内からそのファイルを含むフォルダーを選択します。ファイル1つの選択だけでは隣のファイルへのアクセス権は付与されません。フォルダー選択を取り消すと再生を開始せずホームに戻ります。
+- 選択したフォルダーへの読み取り権限を、Mac用のセキュリティスコープ付きブックマークとして保存します。
+- Mac専用のBundle IDは `jp.nagu.ContinuousPlayer-for-Mac` です。Mac用のサンドボックス権限は `Configuration/Catalyst.entitlements` を使用し、iOS／tvOSの権限設定とは分けています。
+- Catalystの標準ファイルダイアログは、元の場所でファイルを開く際に選択項目の読み書き権限を要求するため、署名には `com.apple.security.files.user-selected.read-write` を設定しています。読み取り専用の署名設定では選択がキャンセル扱いになります。アプリはメディアを変更せず、保存するフォルダーブックマークは読み取り専用です。
+- DLNAのアドレス指定接続とSSDP自動検索を有効にしています。ネットワーク送受信の権限を設定しています。実際のNASへの接続時はローカルネットワークへのアクセスを許可してください。
+- 別のアプリへの切り替えなど、シーンが非アクティブになっただけでは再生を止めません。シーンがバックグラウンドになった場合や音声の割り込み時には停止します。iOS／tvOS版の停止条件は従来どおりです。
+- 映像領域の中央クリックで再生／一時停止、左右クリックで10秒シークができます。既存のSpace・矢印・Iキー操作も共有しています。
+
+検証範囲と残る確認事項は [Mac Catalyst検証記録](docs/catalyst-validation.md) を参照してください。
+
 ## Apple TV / tvOS版
 
 `ContinuousPlayer_for_tvOS` ターゲット／共有スキームで、tvOS 26.0以降のApple TVに対応しています。

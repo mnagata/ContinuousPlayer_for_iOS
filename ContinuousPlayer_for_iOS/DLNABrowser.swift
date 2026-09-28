@@ -1,6 +1,8 @@
 import SwiftUI
 
 struct DLNABrowser: View {
+    let registeredFolders: RegisteredFolders
+    let initialFolder: RegisteredDLNAFolder?
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
     @State private var playback = PlaybackController()
@@ -8,7 +10,14 @@ struct DLNABrowser: View {
     @State private var returnHome = false
     @State private var folderPath: [Folder] = []
     @State private var lastSelections: [Folder: String] = [:]
+    @State private var reconnectError: String?
+    @State private var isReconnecting = false
     private let client = DLNAClient()
+
+    init(registeredFolders: RegisteredFolders, initialFolder: RegisteredDLNAFolder? = nil) {
+        self.registeredFolders = registeredFolders
+        self.initialFolder = initialFolder
+    }
 
     private struct Selection: Identifiable {
         let id = UUID()
@@ -28,6 +37,8 @@ struct DLNABrowser: View {
             .navigationDestination(for: Folder.self) { folder in
                 DLNAFolderView(client: client, server: folder.server, objectID: folder.objectID,
                                title: folder.title,
+                               registeredFolders: registeredFolders,
+                               registrationPath: registrationPath(to: folder),
                                lastSelectionID: Binding(get: { lastSelections[folder] },
                                                         set: { lastSelections[folder] = $0 }),
                                openFolder: { entry in
@@ -53,6 +64,11 @@ struct DLNABrowser: View {
             }
             .toolbar { cancelToolbar }
         }
+        .overlay { if isReconnecting { ProgressView("保存したDLNAフォルダーに接続中…") } }
+        .alert("保存したフォルダーを開けません", isPresented: Binding(get: { reconnectError != nil }, set: { if !$0 { reconnectError = nil } })) {
+            Button("閉じる", role: .cancel) { reconnectError = nil }
+        } message: { Text(reconnectError ?? "") }
+        .task(id: initialFolder?.id) { await openInitialFolder() }
         .fullScreenCover(item: $selection, onDismiss: {
             playback.setPlaylist([])
             if returnHome { dismiss() }
@@ -66,7 +82,47 @@ struct DLNABrowser: View {
                 self.selection = nil
             }
         }
-        .onChange(of: scenePhase, initial: true) { _, phase in playback.setActive(phase == .active) }
+        .onChange(of: scenePhase, initial: true) { _, phase in
+            #if targetEnvironment(macCatalyst)
+            // Switching to another Mac app should not interrupt playback.
+            playback.setActive(phase != .background)
+            #else
+            playback.setActive(phase == .active)
+            #endif
+        }
+    }
+
+    private func registrationPath(to folder: Folder) -> [RegisteredDLNAPath] {
+        guard let index = folderPath.firstIndex(of: folder) else { return [] }
+        return folderPath[...index].map { RegisteredDLNAPath(id: $0.objectID, title: $0.title) }
+    }
+
+    private func openInitialFolder() async {
+        guard let initialFolder else { return }
+        isReconnecting = true
+        defer { isReconnecting = false }
+        do {
+            let server = try await reconnect(initialFolder)
+            guard !initialFolder.path.isEmpty else { return }
+            folderPath = initialFolder.path.map { Folder(server: server, objectID: $0.id, title: $0.title) }
+        } catch {
+            reconnectError = "\(initialFolder.serverName)への接続を確認してください。\(error.localizedDescription)"
+        }
+    }
+
+    private func reconnect(_ folder: RegisteredDLNAFolder) async throws -> DLNAServer {
+        if let server = try? await client.server(at: folder.descriptionURL), server.id == folder.serverID {
+            return server
+        }
+        if DLNADiscovery.isAvailable {
+            for url in try await DLNADiscovery.locations() {
+                try Task.checkCancellation()
+                if let server = try? await client.server(at: url), server.id == folder.serverID {
+                    return server
+                }
+            }
+        }
+        throw DLNAError.message("登録時のサーバーが見つかりません。")
     }
 
     @ViewBuilder
@@ -303,6 +359,8 @@ private struct DLNAFolderView: View {
     let server: DLNAServer
     let objectID: String
     let title: String
+    let registeredFolders: RegisteredFolders
+    let registrationPath: [RegisteredDLNAPath]
     @Binding var lastSelectionID: String?
     let openFolder: (DLNAEntry) -> Void
     let play: ([DLNAEntry], DLNAEntry) -> Void
@@ -371,6 +429,16 @@ private struct DLNAFolderView: View {
         .navigationTitle(title).dlnaNavigationTitleStyle()
         .dlnaBrowserBackground()
         .toolbar {
+            #if !os(tvOS)
+            ToolbarItem(placement: .primaryAction) {
+                Button(registeredFolders.contains(server, objectID: objectID) ? "登録解除" : "登録",
+                       systemImage: registeredFolders.contains(server, objectID: objectID) ? "bookmark.slash" : "bookmark") {
+                    registeredFolders.toggleDLNA(server: server, path: registrationPath)
+                }
+                .disabled(registrationPath.isEmpty)
+                .accessibilityIdentifier("dlna.registerFolder")
+            }
+            #endif
             ToolbarItem(placement: .primaryAction) {
                 Button("再読み込み", systemImage: "arrow.clockwise") { refreshID = UUID() }
                     .disabled(isLoading)
@@ -396,7 +464,7 @@ private struct DLNAFolderView: View {
     }
 }
 
-#Preview("DLNAサーバー") { DLNABrowser() }
+#Preview("DLNAサーバー") { DLNABrowser(registeredFolders: RegisteredFolders()) }
 
 private extension View {
     @ViewBuilder

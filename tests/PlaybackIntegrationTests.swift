@@ -38,6 +38,18 @@ import Foundation
         restoredLibrary.playback.resume()
         try await waitUntil { restoredLibrary.playback.player.currentTime().seconds > 0 }
         restoredLibrary.stop()
+        precondition(restoredLibrary.playback.player.rate == 0
+                     && restoredLibrary.playback.player.currentItem == nil
+                     && restoredLibrary.playback.state.currentURL == nil
+                     && !restoredLibrary.playback.state.wantsToPlay,
+                     "Closing playback must remove the item and stop audio, not only hide the surface")
+        await restoredLibrary.playFromSelection(playlistFolder.appendingPathComponent("Series OP.wav"))
+        restoredLibrary.stop()
+        try await Task.sleep(for: .milliseconds(200))
+        precondition(restoredLibrary.playback.player.currentItem == nil
+                     && restoredLibrary.playback.player.rate == 0
+                     && !restoredLibrary.playback.isLoading,
+                     "Closing during preparation must not restart playback asynchronously")
         isolatedDefaults.set(Data([0, 1, 2]), forKey: "validation.folder.bookmark")
         let invalidLibrary = MediaLibrary(defaults: isolatedDefaults)
         await invalidLibrary.restore(loadPlaylist: false)

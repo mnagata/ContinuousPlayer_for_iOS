@@ -33,7 +33,7 @@ private struct TVHomeScreen: View {
         .tint(.cyan)
         .preferredColorScheme(.dark)
         .fullScreenCover(isPresented: $showsBrowser) {
-            DLNABrowser()
+            DLNABrowser(registeredFolders: RegisteredFolders())
                 // The browser needs its own appearance: the home/player use dark backgrounds.
                 .preferredColorScheme(.light)
                 .tint(.blue)
