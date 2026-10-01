@@ -466,6 +466,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = "jp.nagu.ContinuousPlayer-for-iOS";
 				"PRODUCT_BUNDLE_IDENTIFIER[sdk=macosx*]" = "jp.nagu.ContinuousPlayer-for-Mac";
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				"PRODUCT_NAME[sdk=macosx*]" = ContinuousPlayer;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
 				SUPPORTS_MACCATALYST = YES;
@@ -523,6 +524,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = "jp.nagu.ContinuousPlayer-for-iOS";
 				"PRODUCT_BUNDLE_IDENTIFIER[sdk=macosx*]" = "jp.nagu.ContinuousPlayer-for-Mac";
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				"PRODUCT_NAME[sdk=macosx*]" = ContinuousPlayer;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
 				SUPPORTS_MACCATALYST = YES;

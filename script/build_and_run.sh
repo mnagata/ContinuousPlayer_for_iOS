@@ -11,7 +11,7 @@ export DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Develope
 BUILD_DIR="${BUILD_DIR:-/tmp/ContinuousPlayer-Catalyst}"
 mkdir -p "$BUILD_DIR"
 BUILD_DIR="$(cd "$BUILD_DIR" && pwd -P)"
-APP_NAME="ContinuousPlayer_for_iOS"
+APP_NAME="ContinuousPlayer"
 APP_BUNDLE="$BUILD_DIR/Build/Products/Debug-maccatalyst/$APP_NAME.app"
 APP_BINARY="$APP_BUNDLE/Contents/MacOS/$APP_NAME"
 
