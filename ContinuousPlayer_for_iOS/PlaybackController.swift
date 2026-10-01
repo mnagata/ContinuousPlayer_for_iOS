@@ -25,6 +25,11 @@ final class PlaybackController {
     private var lastAdvance = ContinuousClock.now
     private var isActive = true
     private var interrupted = false
+    #if os(iOS) || os(tvOS)
+    private var audioSessionReady = false
+    private var audioSessionGeneration = 0
+    private var audioSessionActivation: Task<Void, Never>?
+    #endif
     private(set) var pauseReason: String?
     private(set) var needsFolderSelection = false
     private(set) var isBuffering = false
@@ -45,6 +50,7 @@ final class PlaybackController {
         })
         systemNotifications.append(center.addObserver(forName: AVAudioSession.mediaServicesWereResetNotification, object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor [weak self] in
+                self?.invalidateAudioSession()
                 self?.pause()
                 self?.clearItem()
                 self?.player = AVPlayer()
@@ -59,6 +65,9 @@ final class PlaybackController {
     func setActive(_ active: Bool) {
         isActive = active
         if !active {
+            #if os(iOS) || os(tvOS)
+            invalidateAudioSession()
+            #endif
             pause()
             pauseReason = "アプリが非アクティブになったため停止しました。"
         }
@@ -67,12 +76,18 @@ final class PlaybackController {
     func setInterrupted(_ value: Bool) {
         interrupted = value
         if value {
+            #if os(iOS) || os(tvOS)
+            invalidateAudioSession()
+            #endif
             pause()
             pauseReason = "音声の割り込みで停止しました。割り込み終了後、手動で再開してください。"
         }
     }
 
     func outputDisconnected() {
+        #if os(iOS) || os(tvOS)
+        invalidateAudioSession()
+        #endif
         pause()
         pauseReason = "音声出力機器が切断されました。再生ボタンで再開できます。"
     }
@@ -84,13 +99,8 @@ final class PlaybackController {
         }
         guard !isLoading, state.wantsToPlay else { return }
         #if os(iOS) || os(tvOS)
-        do {
-            let session = AVAudioSession.sharedInstance()
-            try session.setCategory(.playback, mode: .moviePlayback)
-            try session.setActive(true)
-        } catch {
-            pause()
-            self.error = "音声出力を開始できません: \(error.localizedDescription)"
+        guard audioSessionReady else {
+            activateAudioSession()
             return
         }
         #endif
@@ -98,6 +108,43 @@ final class PlaybackController {
         lastAdvance = .now
         player.play()
     }
+
+    #if os(iOS) || os(tvOS)
+    private func invalidateAudioSession() {
+        audioSessionGeneration += 1
+        audioSessionReady = false
+    }
+
+    private func activateAudioSession() {
+        guard audioSessionActivation == nil else { return }
+        let sessionGeneration = audioSessionGeneration
+        audioSessionActivation = Task { [weak self] in
+            // These synchronous AVAudioSession calls can block, especially on Catalyst.
+            let result = await Task.detached(priority: .userInitiated) { () -> Result<Void, Error> in
+                Result {
+                    let session = AVAudioSession.sharedInstance()
+                    try session.setCategory(.playback, mode: .moviePlayback)
+                    try session.setActive(true)
+                }
+            }.value
+            guard let self else { return }
+            self.audioSessionActivation = nil
+            guard self.audioSessionGeneration == sessionGeneration else {
+                if self.state.wantsToPlay { self.startPlayback() }
+                return
+            }
+            switch result {
+            case .success:
+                self.audioSessionReady = true
+                self.startPlayback()
+            case .failure(let error):
+                guard self.state.wantsToPlay else { return }
+                self.pause()
+                self.error = "音声出力を開始できません: \(error.localizedDescription)"
+            }
+        }
+    }
+    #endif
 
     /// File-provider errors may wrap a Cocoa/POSIX access failure.
     nonisolated static func isAccessFailure(_ error: Error?) -> Bool {
