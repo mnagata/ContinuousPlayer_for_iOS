@@ -5,10 +5,14 @@ final class TVPlaybackUITests: XCTestCase {
     func testRemoteBrowsePlaybackAndReturn() throws {
         continueAfterFailure = false
         let app = XCUIApplication()
-        app.launchArguments = ["-dlna.lastServerAddress", "127.0.0.1:18765"]
+        app.launchArguments = ["--ui-bookmark-tests", "-dlna.lastServerAddress", "127.0.0.1:18765"]
         app.launch()
         defer { app.terminate() }
-        XCTAssertTrue(app.buttons["home.dlna"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["home.chooseFolder"].waitForExistence(timeout: 10))
+        XCUIRemote.shared.press(.select)
+        let addFolder = app.buttons["saved.addFolder"]
+        XCTAssertTrue(addFolder.waitForExistence(timeout: 10))
+        try focus(addFolder)
         XCUIRemote.shared.press(.select)
         let server = app.buttons["Fixture NAS"]
         XCTAssertTrue(server.waitForExistence(timeout: 20))
@@ -19,8 +23,16 @@ final class TVPlaybackUITests: XCTestCase {
         XCTAssertFalse(app.buttons["dlna.refreshServers"].exists)
         try focus(server)
         XCUIRemote.shared.press(.select)
+        let registerFolder = app.buttons["dlna.registerFolder"]
+        XCTAssertTrue(registerFolder.waitForExistence(timeout: 10))
+        try focus(registerFolder)
+        XCUIRemote.shared.press(.select)
+        let savedFolder = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "saved.dlna.")).firstMatch
+        XCTAssertTrue(savedFolder.waitForExistence(timeout: 10), "Registration returns to saved folders")
+        try focus(savedFolder)
+        XCUIRemote.shared.press(.select)
         let file = app.buttons["作品 OP.mp4から連続再生"]
-        XCTAssertTrue(file.waitForExistence(timeout: 10))
+        XCTAssertTrue(file.waitForExistence(timeout: 20), "Saved folder opens without choosing the server again")
         try focus(file)
         XCUIRemote.shared.press(.select)
         XCTAssertTrue(app.staticTexts["このフォルダーの再生が終了しました。"].waitForExistence(timeout: 30))
@@ -50,10 +62,14 @@ final class TVPlaybackUITests: XCTestCase {
     func testBackRestoresNestedFolderPositionAndFocus() throws {
         continueAfterFailure = false
         let app = XCUIApplication()
-        app.launchArguments = ["-dlna.lastServerAddress", "http://127.0.0.1:18765/folders.xml"]
+        app.launchArguments = ["--ui-bookmark-tests", "-dlna.lastServerAddress", "http://127.0.0.1:18765/folders.xml"]
         app.launch()
         defer { app.terminate() }
-        XCTAssertTrue(app.buttons["home.dlna"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["home.chooseFolder"].waitForExistence(timeout: 10))
+        XCUIRemote.shared.press(.select)
+        let addFolder = app.buttons["saved.addFolder"]
+        XCTAssertTrue(addFolder.waitForExistence(timeout: 10))
+        try focus(addFolder)
         XCUIRemote.shared.press(.select)
         let server = app.buttons["Fixture NAS"]
         XCTAssertTrue(server.waitForExistence(timeout: 20))

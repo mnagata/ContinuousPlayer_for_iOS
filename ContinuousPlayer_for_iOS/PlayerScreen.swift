@@ -7,6 +7,7 @@ struct PlayerScreen: View {
     let folderName: String
     let home: () -> Void
     let chooseFolder: () -> Void
+    var browsingFiles = false
     private var info: MediaInfo { playback.mediaInfo }
     @State private var outputSummary = ""
     @State private var sheet: DetailSheet?
@@ -31,7 +32,7 @@ struct PlayerScreen: View {
                     PlaybackSurface(
                         player: playback.player,
                         onFirstAppearance: { playback.resume() },
-                        keyboardEnabled: sheet == nil && scenePhase == .active && !playback.needsFolderSelection,
+                        keyboardEnabled: !browsingFiles && sheet == nil && scenePhase == .active && !playback.needsFolderSelection,
                         onPrevious: { playback.move(-1) },
                         onNext: { playback.move(1) },
                         onTogglePlayback: toggle,

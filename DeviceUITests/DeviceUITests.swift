@@ -26,6 +26,44 @@ final class DeviceUITests: XCTestCase {
         add(attachment)
     }
 
+    private func openSavedFolder(named name: String) {
+        app.buttons["home.select"].tap()
+        XCTAssertTrue(app.navigationBars["保存済みフォルダー"].waitForExistence(timeout: 10))
+        let folder = app.buttons.matching(NSPredicate(
+            format: "identifier BEGINSWITH 'saved.local.' AND label CONTAINS %@", name)).firstMatch
+        XCTAssertTrue(folder.waitForExistence(timeout: 10))
+        folder.tap()
+    }
+
+    func testHomeSelectionOpensSavedFolders() {
+        app.launchArguments = ["-isDLNAEnabled", "YES"]
+        app.launch()
+        XCTAssertFalse(app.buttons["home.authorizeFolder"].exists)
+        XCTAssertFalse(app.buttons["home.selectDLNA"].exists)
+        XCTAssertFalse(app.staticTexts["home.authorizationStatus"].exists)
+        app.buttons["home.select"].tap()
+        XCTAssertTrue(app.navigationBars["保存済みフォルダー"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["saved.addFolder"].exists)
+        app.buttons["saved.addFolder"].tap()
+        XCTAssertTrue(app.buttons["saved.source.local"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["saved.source.dlna"].exists)
+        app.buttons["saved.source.close"].tap()
+        XCTAssertTrue(app.buttons["saved.addFolder"].exists)
+    }
+
+    func testDLNASourceIsVisibleWhenFeatureIsOff() {
+        app.launchArguments = ["-isDLNAEnabled", "NO"]
+        app.launch()
+        app.buttons["home.select"].tap()
+        app.buttons["saved.addFolder"].tap()
+        let dlna = app.buttons["saved.source.dlna"]
+        XCTAssertTrue(dlna.waitForExistence(timeout: 5))
+        XCTAssertTrue(dlna.isHittable)
+        XCTAssertTrue(dlna.label.contains("DLNA機能をオンにしてNASを開く"))
+        dlna.tap()
+        XCTAssertTrue(app.navigationBars["DLNAサーバー"].waitForExistence(timeout: 10))
+    }
+
     func testPlaybackRotationAndBackground() {
         launchFixtures()
         app.buttons["1、実機テスト OP.wavから再生"].tap()
@@ -107,16 +145,18 @@ final class DeviceUITests: XCTestCase {
         let open = app.buttons.matching(NSPredicate(format: "label == 'Open' OR label == '開く'")).firstMatch
         XCTAssertTrue(open.waitForExistence(timeout: 15))
         open.tap()
-        XCTAssertTrue(app.staticTexts["home.authorizationStatus"].waitForExistence(timeout: 10))
-        XCTAssertTrue(app.buttons["home.authorizeFolder"].exists)
+        XCTAssertTrue(app.buttons["home.select"].waitForExistence(timeout: 10))
         XCTAssertFalse(app.buttons["一時停止"].firstMatch.exists)
         XCTAssertFalse(app.staticTexts["picker.filePrompt"].exists)
+        app.buttons["home.select"].tap()
+        let saved = app.buttons.matching(NSPredicate(
+            format: "identifier BEGINSWITH 'saved.local.' AND label CONTAINS %@", "UIFixtures")).firstMatch
+        XCTAssertTrue(saved.waitForExistence(timeout: 10))
         app.terminate()
         app.launchArguments = ["--ui-bookmark-tests"]
         app.launch()
-        XCTAssertTrue(app.staticTexts["home.authorizationStatus"].waitForExistence(timeout: 10))
-        app.buttons["home.select"].tap()
-        XCTAssertTrue(app.staticTexts["picker.filePrompt"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["home.select"].waitForExistence(timeout: 10))
+        openSavedFolder(named: "UIFixtures")
         let file = app.cells.matching(NSPredicate(format: "label CONTAINS %@ OR identifier CONTAINS %@", "実機テスト OP", "実機テスト OP")).firstMatch
         XCTAssertTrue(file.waitForExistence(timeout: 15))
         file.tap()
@@ -132,14 +172,30 @@ final class DeviceUITests: XCTestCase {
         XCTAssertTrue(app.buttons["ホームに戻る"].waitForExistence(timeout: 5))
         app.buttons["ホームに戻る"].tap()
         XCTAssertTrue(app.buttons["home.select"].waitForExistence(timeout: 5))
-        app.buttons["home.select"].tap()
-        XCTAssertTrue(app.staticTexts["picker.filePrompt"].waitForExistence(timeout: 10))
+        openSavedFolder(named: "UIFixtures")
         let file = app.cells.matching(NSPredicate(format: "label CONTAINS %@ OR identifier CONTAINS %@", "実機テスト OP", "実機テスト OP")).firstMatch
         XCTAssertTrue(file.waitForExistence(timeout: 10))
         file.tap()
         XCTAssertTrue(app.buttons["一時停止"].firstMatch.waitForExistence(timeout: 10))
         XCTAssertTrue(app.staticTexts["実機テスト OP.wav"].firstMatch.exists)
         capture("permitted-file-selection-playing")
+    }
+
+    func testPausedPlayerFolderPickerCancelKeepsVideo() {
+        launchFixtures()
+        app.buttons["1、実機テスト OP.wavから再生"].tap()
+        XCTAssertTrue(app.buttons["一時停止"].firstMatch.waitForExistence(timeout: 10))
+        app.buttons["一時停止"].firstMatch.tap()
+        XCTAssertTrue(app.buttons["再生"].firstMatch.waitForExistence(timeout: 5))
+
+        app.buttons["folder"].tap()
+        XCTAssertTrue(app.buttons["picker.cancel"].waitForExistence(timeout: 10))
+        capture("paused-player-folder-overlay")
+
+        app.buttons["picker.cancel"].tap()
+        XCTAssertTrue(app.buttons["再生"].firstMatch.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["ホームに戻る"].exists)
+        XCTAssertTrue(app.staticTexts["実機テスト OP.wav"].firstMatch.exists)
     }
 
     func testReopenFilePickerInPlayingSubfolder() {
@@ -173,16 +229,34 @@ final class DeviceUITests: XCTestCase {
         app.launchArguments = []
         app.launch()
         XCTAssertTrue(app.buttons["home.select"].waitForExistence(timeout: 15))
-        app.buttons["home.authorizeFolder"].tap()
+        app.buttons["home.select"].tap()
+        let existingFolderIDs = Set(app.buttons.matching(NSPredicate(
+            format: "identifier BEGINSWITH 'saved.local.'")).allElementsBoundByIndex.map(\.identifier))
+        app.buttons["saved.addFolder"].tap()
+        app.buttons["saved.source.local"].tap()
         let open = app.buttons.matching(NSPredicate(format: "label == 'Open' OR label == '開く'")).firstMatch
         XCTAssertTrue(open.waitForExistence(timeout: 20))
         open.tap()
-        XCTAssertTrue(app.staticTexts["home.authorizationStatus"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["home.select"].waitForExistence(timeout: 10))
         XCTAssertFalse(app.buttons["一時停止"].firstMatch.exists)
+        app.buttons["home.select"].tap()
+        let newlyRegistered = app.buttons.matching(NSPredicate(
+            format: "identifier BEGINSWITH 'saved.local.' AND NOT (identifier IN %@)", Array(existingFolderIDs))).firstMatch
+        let savedFolderID: String
+        if newlyRegistered.waitForExistence(timeout: 10) {
+            savedFolderID = newlyRegistered.identifier
+        } else {
+            let existingFolder = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'saved.local.'")).firstMatch
+            XCTAssertTrue(existingFolder.waitForExistence(timeout: 5))
+            savedFolderID = existingFolder.identifier
+        }
         app.terminate()
         app.launch()
-        XCTAssertTrue(app.staticTexts["home.authorizationStatus"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.buttons["home.select"].waitForExistence(timeout: 15))
         app.buttons["home.select"].tap()
+        let savedFolder = app.buttons[savedFolderID]
+        XCTAssertTrue(savedFolder.waitForExistence(timeout: 10))
+        savedFolder.tap()
         _ = app.cells.firstMatch.waitForExistence(timeout: 20)
         let mp4 = app.cells.matching(NSPredicate(format: "identifier ENDSWITH[c] ', mp4'")).firstMatch
         XCTAssertTrue(mp4.waitForExistence(timeout: 15))

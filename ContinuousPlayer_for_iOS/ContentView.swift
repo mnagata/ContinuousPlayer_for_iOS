@@ -1,14 +1,29 @@
 import SwiftUI
+import AVFoundation
 import UniformTypeIdentifiers
 import UIKit
+import OSLog
+
+private enum FolderAction {
+    case local(RegisteredLocalFolder), dlna(RegisteredDLNAFolder), addLocal, addDLNA
+}
 
 struct ContentView: View {
     @State private var library = MediaLibrary()
+    @State private var registeredFolders = RegisteredFolders()
     @AppStorage("useSystemFilePicker") private var useSystemFilePicker = false
     @AppStorage("isDLNAEnabled") private var isDLNAEnabled = true
-    private enum Presentation: String, Identifiable {
-        case folder, file, browser, player, dlna
-        var id: String { rawValue }
+    private enum Presentation: Identifiable, Equatable {
+        case folder, file, browser, player, dlna(RegisteredDLNAFolder?)
+        var id: String {
+            switch self {
+            case .folder: "folder"
+            case .file: "file"
+            case .browser: "browser"
+            case .player: "player"
+            case .dlna: "dlna"
+            }
+        }
     }
     @State private var presentation: Presentation?
     @State private var pickedURL: URL?
@@ -16,20 +31,21 @@ struct ContentView: View {
     @State private var pickedFile = false
     @State private var pickerHasDismissed = false
     @State private var showingLibrary = false
-    @State private var pickFolderAfterPlayback = false
+    @State private var showingPlayerFileBrowser = false
+    @State private var playerFileError: String?
     @State private var pickerError: String?
-    @State private var authorizationStatus: String?
+    @State private var showingSavedFolders = false
+    @State private var showSavedFoldersAfterDLNA = false
+    @State private var folderAction: FolderAction?
+    #if targetEnvironment(macCatalyst)
+    @State private var macImporterPresented = false
+    #endif
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         NavigationStack {
-            HomeView(authorizationStatus: authorizationStatus,
-                     isDLNAEnabled: isDLNAEnabled, authorize: beginAuthorization, selectDLNA: {
-                if isDLNAEnabled { presentation = .dlna }
-            }) {
-                Task {
-                    await beginSelection()
-                }
+            HomeView {
+                showingSavedFolders = true
             }
             .overlay {
                 if library.isLoading { ProgressView("プレイリストを作成中…").padding().background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12)) }
@@ -58,68 +74,28 @@ struct ContentView: View {
             }
         }
         .tint(.cyan)
+        .sheet(isPresented: $showingSavedFolders, onDismiss: handleFolderAction) {
+            SavedFoldersView(folders: registeredFolders, isDLNAEnabled: $isDLNAEnabled,
+                             onRemoveLocal: removeRegisteredLocal) { action in
+                folderAction = action
+                showingSavedFolders = false
+            }
+        }
+        #if targetEnvironment(macCatalyst)
+        .background {
+            CatalystDocumentPicker(isPresented: $macImporterPresented,
+                                   folder: true,
+                                   directory: library.folderURL,
+                                   completion: handleMacSelection)
+                .frame(width: 0, height: 0)
+        }
+        #endif
         .alert("メディアを開けません", isPresented: Binding(get: { pickerError != nil }, set: { if !$0 { pickerError = nil } })) {
             Button("閉じる", role: .cancel) { pickerError = nil }
         } message: { Text(pickerError ?? "") }
         // One presenter serializes folder -> player -> folder transitions.
         .fullScreenCover(item: $presentation, onDismiss: presentationDidDismiss) { destination in
-            switch destination {
-            case .folder, .file:
-                VStack(spacing: 0) {
-                    HStack {
-                        Button("キャンセル", role: .cancel) {
-                            pickedURL = nil
-                            presentation = nil
-                        }
-                        .accessibilityIdentifier("folder.cancel")
-                        .frame(minHeight: 44)
-                        Spacer()
-                    }
-                    .padding(.horizontal)
-                    Text(destination == .folder
-                         ? "アクセスを許可するUSB内のフォルダーを開いて、右上の「開く」を押してください。"
-                         : "再生を開始する動画・音声ファイルをタップしてください。")
-                        .accessibilityIdentifier(destination == .file ? "picker.filePrompt" : "picker.folderPrompt")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal)
-                        .padding(.bottom, 8)
-                    SystemMediaPicker(folder: destination == .folder,
-                                      directory: destination == .file ? library.currentDirectoryURL : library.folderURL) { url in
-                        pickedFile = destination == .file
-                        pickedURL = url
-                        presentation = nil
-                        finishFolderSelectionIfReady()
-                    }
-                    .id(destination)
-                }
-            case .browser:
-                if let root = library.folderURL {
-                    MediaFileBrowser(root: root, initialDirectory: library.currentDirectoryURL ?? root,
-                                     initialFile: lastPlaybackURL) { url in
-                        pickedFile = true
-                        pickedURL = url
-                        presentation = nil
-                        finishFolderSelectionIfReady()
-                    }
-                }
-            case .dlna:
-                DLNABrowser()
-            case .player:
-                PlayerScreen(playback: library.playback, folderName: library.folderName) {
-                    lastPlaybackURL = library.playback.state.currentURL
-                    library.stop()
-                    presentation = nil
-                    showingLibrary = false
-                } chooseFolder: {
-                    pickFolderAfterPlayback = true
-                    lastPlaybackURL = library.playback.state.currentURL
-                    library.stop()
-                    presentation = nil
-                    showingLibrary = false
-                }
-            }
+            presentedScreen(destination)
         }
         .task {
             #if DEBUG
@@ -128,27 +104,142 @@ struct ContentView: View {
                 showingLibrary = true
                 let folder = arguments.contains("--ui-real-samples") ? "RealSamples"
                     : arguments.contains("--ui-narrow-folder") ? "UIFixtures/SecondPlaylist" : "UIFixtures"
-                await library.open(URL.documentsDirectory.appendingPathComponent(folder), persist: false)
+                let url = URL.documentsDirectory.appendingPathComponent(folder)
+                await library.open(url, persist: false)
+                try? registeredFolders.addLocal(url)
                 return
             }
             #endif
             if library.hasSavedFolder {
                 await library.restore(loadPlaylist: false)
-                authorizationStatus = library.error == nil
-                    ? "許可済み: \(library.folderName)" : "保存したアクセス許可を復元できません。再度許可してください。"
+                if library.error == nil, let url = library.folderURL {
+                    try? registeredFolders.addLocal(url)
+                }
             }
         }
-        .onChange(of: scenePhase, initial: true) { _, phase in library.playback.setActive(phase == .active) }
+        .onChange(of: scenePhase, initial: true) { _, phase in
+            #if targetEnvironment(macCatalyst)
+            // Switching to another Mac app should not interrupt playback.
+            library.playback.setActive(phase != .background)
+            #else
+            library.playback.setActive(phase == .active)
+            #endif
+        }
+    }
+
+    @ViewBuilder
+    private func presentedScreen(_ destination: Presentation) -> some View {
+        switch destination {
+        case .folder:
+            systemMediaPicker(isFolder: true)
+        case .file:
+            systemMediaPicker(isFolder: false)
+        case .browser:
+            if let root = library.folderURL {
+                MediaFileBrowser(root: root, initialDirectory: library.currentDirectoryURL ?? root,
+                                 initialFile: lastPlaybackURL) { url in
+                    pickedFile = true
+                    pickedURL = url
+                    presentation = nil
+                    finishFolderSelectionIfReady()
+                } cancel: { presentation = nil }
+            }
+        case .dlna(let folder):
+            DLNABrowser(registeredFolders: registeredFolders, initialFolder: folder) {
+                showSavedFoldersAfterDLNA = true
+                presentation = nil
+            }
+        case .player:
+            localPlayerScreen()
+        }
+    }
+
+    private func localPlayerScreen() -> some View {
+        ZStack {
+            PlayerScreen(playback: library.playback, folderName: library.folderName,
+                         home: {
+                             lastPlaybackURL = library.playback.state.currentURL
+                             library.stop()
+                             presentation = nil
+                             showingLibrary = false
+                         }, chooseFolder: {
+                             lastPlaybackURL = library.playback.state.currentURL
+                             library.playback.pause()
+                             showingPlayerFileBrowser = true
+                         }, browsingFiles: showingPlayerFileBrowser)
+                .accessibilityHidden(showingPlayerFileBrowser)
+            if showingPlayerFileBrowser, let root = library.folderURL {
+                MediaFileBrowser(root: root, initialDirectory: library.currentDirectoryURL ?? root,
+                                 initialFile: lastPlaybackURL) { url in
+                    showingPlayerFileBrowser = false
+                    Task {
+                        await library.playFromSelection(url, autoplay: false)
+                        playerFileError = library.error
+                    }
+                } cancel: {
+                    showingPlayerFileBrowser = false
+                }
+                .accessibilityIdentifier("player.fileBrowserOverlay")
+            }
+        }
+        .alert("メディアを開けません", isPresented: Binding(
+            get: { playerFileError != nil },
+            set: { if !$0 { playerFileError = nil } }
+        )) {
+            Button("閉じる", role: .cancel) { playerFileError = nil }
+        } message: { Text(playerFileError ?? "") }
+    }
+
+    private func systemMediaPicker(isFolder: Bool) -> some View {
+        VStack(spacing: 0) {
+            HStack {
+                Button("キャンセル", role: .cancel) {
+                    pickedURL = nil
+                    presentation = nil
+                }
+                .accessibilityIdentifier("folder.cancel")
+                .frame(minHeight: 44)
+                Spacer()
+            }
+            .padding(.horizontal)
+            Text(isFolder
+                 ? "登録するフォルダーを開いて、右上の「開く」を押してください。"
+                 : "再生を開始する動画・音声ファイルをタップしてください。")
+                .accessibilityIdentifier(isFolder ? "picker.folderPrompt" : "picker.filePrompt")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal)
+                .padding(.bottom, 8)
+            SystemMediaPicker(folder: isFolder,
+                              directory: isFolder ? library.folderURL : library.currentDirectoryURL) { url in
+                pickedFile = !isFolder
+                pickedURL = url
+                presentation = nil
+                finishFolderSelectionIfReady()
+            }
+            .id(isFolder)
+        }
     }
 
     private func presentationDidDismiss() {
-        if pickFolderAfterPlayback {
-            pickFolderAfterPlayback = false
-            Task { await beginSelection() }
-        } else {
-            pickerHasDismissed = true
-            finishFolderSelectionIfReady()
+        showingPlayerFileBrowser = false
+        playerFileError = nil
+        // Escape/system dismissal bypasses the player's Home/Choose buttons.
+        // Tear down its AVPlayer item and pending preparation on every exit.
+        if let currentURL = library.playback.state.currentURL {
+            lastPlaybackURL = currentURL
+            library.stop()
+            Logger(subsystem: "jp.nagu.ContinuousPlayer-for-iOS", category: "PlaybackLifecycle")
+                .notice("Player dismissed: rate=\(library.playback.player.rate), hasItem=\(library.playback.player.currentItem != nil)")
         }
+        if showSavedFoldersAfterDLNA {
+            showSavedFoldersAfterDLNA = false
+            showingSavedFolders = true
+            return
+        }
+        pickerHasDismissed = true
+        finishFolderSelectionIfReady()
     }
 
     // UIKit can deliver the selected URL after SwiftUI's dismissal callback.
@@ -167,8 +258,9 @@ struct ContentView: View {
                 if let error = library.error {
                     pickerError = error
                 } else {
+                    do { try registeredFolders.addLocal(url) }
+                    catch { pickerError = "フォルダーの登録に失敗しました。\(error.localizedDescription)"; return }
                     showingLibrary = false
-                    authorizationStatus = "アクセス許可を保存しました: \(library.folderName)"
                 }
             }
         }
@@ -176,21 +268,87 @@ struct ContentView: View {
 
     private func beginAuthorization() {
         lastPlaybackURL = nil
+        #if targetEnvironment(macCatalyst)
+        macImporterPresented = true
+        #else
         pickerHasDismissed = false
         pickedURL = nil
         presentation = .folder
+        #endif
+    }
+
+    private func handleFolderAction() {
+        guard let action = folderAction else { return }
+        folderAction = nil
+        switch action {
+        case .addLocal:
+            beginAuthorization()
+        case .addDLNA:
+            presentation = .dlna(nil)
+        case .dlna(let folder):
+            presentation = .dlna(folder)
+        case .local(let folder):
+            Task {
+                do {
+                    let url = try registeredFolders.resolve(folder)
+                    await library.open(url, loadPlaylist: false)
+                    guard library.error == nil else { pickerError = library.error; return }
+                    try? registeredFolders.addLocal(url)
+                    pickerHasDismissed = false
+                    pickedURL = nil
+                    await beginSelection()
+                } catch {
+                    pickerError = "登録したフォルダーを開けません。再登録してください。\(error.localizedDescription)"
+                }
+            }
+        }
+    }
+
+    private func removeRegisteredLocal(_ folder: RegisteredLocalFolder) {
+        registeredFolders.removeLocal(folder)
+        let removedURL = try? registeredFolders.resolve(folder)
+        if (removedURL != nil && library.folderURL?.standardizedFileURL == removedURL?.standardizedFileURL)
+            || (removedURL == nil && registeredFolders.local.isEmpty && library.hasSavedFolder) {
+            library.forgetFolder()
+        }
     }
 
     private func beginSelection() async {
         let canSelectFile = await library.prepareFileSelection()
         guard canSelectFile else {
-            pickerError = "先に「USBストレージへのアクセスを許可」で、再生するファイルのあるフォルダーを許可してください。"
+            pickerError = library.error ?? "先に「OP / EDを選ぶ」で保存済みフォルダーを開くか、「フォルダーを追加」で登録してください。"
             return
         }
         pickerHasDismissed = false
         pickedURL = nil
+        #if targetEnvironment(macCatalyst)
+        presentation = .browser
+        #else
         presentation = useSystemFilePicker ? .file : .browser
+        #endif
     }
+
+    #if targetEnvironment(macCatalyst)
+    private func handleMacSelection(_ result: Result<URL, Error>) {
+        Logger(subsystem: "jp.nagu.ContinuousPlayer-for-iOS", category: "FileSelection").notice("Mac folder importer completion")
+        switch result {
+        case .failure(let error):
+            if (error as NSError).code != NSUserCancelledError {
+                pickerError = error.localizedDescription
+            }
+        case .success(let url):
+            Task {
+                await library.authorizeFolder(url)
+                guard library.error == nil else {
+                    pickerError = library.error
+                    return
+                }
+                do { try registeredFolders.addLocal(url) }
+                catch { pickerError = "フォルダーの登録に失敗しました。\(error.localizedDescription)" }
+            }
+        }
+    }
+    #endif
 
     private func showPlaybackOrError() {
         if library.error == nil {
@@ -204,10 +362,6 @@ struct ContentView: View {
 }
 
 private struct HomeView: View {
-    let authorizationStatus: String?
-    let isDLNAEnabled: Bool
-    let authorize: () -> Void
-    let selectDLNA: () -> Void
     let select: () -> Void
     var body: some View {
         GeometryReader { geometry in
@@ -224,33 +378,20 @@ private struct HomeView: View {
                             .font(.system(size: 32, weight: .bold, design: .rounded))
                             .lineLimit(1).minimumScaleFactor(0.6)
                     }
-                    Button(action: authorize) {
-                        Label("USBストレージへのアクセスを許可", systemImage: "externaldrive.badge.checkmark")
-                            .font(.headline).frame(maxWidth: .infinity).padding(.vertical, 14)
-                    }
-                    .buttonStyle(.bordered).frame(maxWidth: 360)
-                    .accessibilityIdentifier("home.authorizeFolder")
-                    if let authorizationStatus {
-                        Text(authorizationStatus).font(.caption).multilineTextAlignment(.center)
-                            .accessibilityIdentifier("home.authorizationStatus")
-                    }
                     Button(action: select) {
-                        Label("OP / EDを選ぶ", systemImage: "folder")
+                        Label("OP / EDを選ぶ", systemImage: "folder.fill")
                             .font(.headline).frame(maxWidth: .infinity).padding(.vertical, 18)
                             .background(LinearGradient(colors: [.teal, .indigo], startPoint: .leading, endPoint: .trailing), in: RoundedRectangle(cornerRadius: 18))
                     }
                     .buttonStyle(.plain).frame(maxWidth: 320)
                     .accessibilityIdentifier("home.select")
-                    if isDLNAEnabled {
-                        Button(action: selectDLNA) {
-                            Label("DLNAサーバーから選ぶ", systemImage: "network")
-                                .font(.headline).frame(maxWidth: .infinity).padding(.vertical, 14)
-                        }
-                        .buttonStyle(.bordered).frame(maxWidth: 360)
-                        .accessibilityIdentifier("home.selectDLNA")
-                    }
-                    Text("USB再生では最初にストレージへのアクセスを許可してください。\n保存した許可は次回も使用します。")
+                    #if targetEnvironment(macCatalyst)
+                    Text("「OP / EDを選ぶ」から保存済みフォルダーの選択・追加ができます。")
                         .font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                    #else
+                    Text("「OP / EDを選ぶ」からフォルダーの選択・追加ができます。\n登録したフォルダーは次回も使用できます。")
+                        .font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                    #endif
                 }
                 .padding(28)
                 .frame(maxWidth: .infinity, minHeight: geometry.size.height)
@@ -258,6 +399,260 @@ private struct HomeView: View {
         }
         .foregroundStyle(.white)
         .background(HomeAppearance.background.ignoresSafeArea())
+    }
+}
+
+private struct SavedFoldersView: View {
+    let folders: RegisteredFolders
+    @Binding var isDLNAEnabled: Bool
+    let onRemoveLocal: (RegisteredLocalFolder) -> Void
+    let select: (FolderAction) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var isCompactPhoneLandscape = false
+    @State private var choosingSource = false
+    @State private var pendingRemoval: Removal?
+
+    private enum Removal: Identifiable {
+        case local(RegisteredLocalFolder), dlna(RegisteredDLNAFolder)
+        var id: String {
+            switch self {
+            case .local(let folder): "local-\(folder.id)"
+            case .dlna(let folder): "dlna-\(folder.id)"
+            }
+        }
+    }
+
+    var body: some View {
+        ZStack {
+        NavigationStack {
+            List {
+                if !folders.local.isEmpty {
+                    Section {
+                        ForEach(folders.local.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }) { folder in
+                            Button { select(.local(folder)) } label: {
+                                folderRow(title: folder.name, icon: "folder.fill")
+                            }
+                            .buttonStyle(.plain)
+                            .savedFolderRowStyle(compact: isCompactPhoneLandscape)
+                            .accessibilityIdentifier("saved.local.\(folder.id)")
+                            .contextMenu {
+                                Button("登録解除", systemImage: "trash", role: .destructive) {
+                                    pendingRemoval = .local(folder)
+                                }
+                            }
+                            .swipeActions {
+                                Button("登録解除", role: .destructive) { pendingRemoval = .local(folder) }
+                            }
+                        }
+                    } header: { Text("端末のフォルダー").foregroundStyle(.cyan) }
+                }
+                if isDLNAEnabled && !folders.dlna.isEmpty {
+                    Section {
+                        ForEach(folders.dlna.sorted { $0.detail.localizedStandardCompare($1.detail) == .orderedAscending }) { folder in
+                            Button { select(.dlna(folder)) } label: {
+                                folderRow(title: folder.name, detail: folder.detail, icon: "network")
+                            }
+                            .buttonStyle(.plain)
+                            .savedFolderRowStyle(compact: isCompactPhoneLandscape)
+                            .accessibilityIdentifier("saved.dlna.\(folder.id)")
+                            .contextMenu {
+                                Button("登録解除", systemImage: "trash", role: .destructive) {
+                                    pendingRemoval = .dlna(folder)
+                                }
+                            }
+                            .swipeActions {
+                                Button("登録解除", role: .destructive) { pendingRemoval = .dlna(folder) }
+                            }
+                        }
+                    } header: { Text("DLNAフォルダー").foregroundStyle(.cyan) }
+                }
+                if folders.local.isEmpty && (!isDLNAEnabled || folders.dlna.isEmpty) {
+                    ContentUnavailableView("登録したフォルダーはありません", systemImage: "folder.badge.plus",
+                                           description: Text("「フォルダーを追加」から登録してください。"))
+                        .listRowBackground(Color.clear)
+                }
+            }
+            .listStyle(.plain)
+            .environment(\.defaultMinListRowHeight, isCompactPhoneLandscape ? 40 : 44)
+            .onGeometryChange(for: Bool.self) { geometry in
+                UIDevice.current.userInterfaceIdiom == .phone && geometry.size.width > geometry.size.height
+            } action: { _, isLandscape in
+                isCompactPhoneLandscape = isLandscape
+            }
+            .scrollContentBackground(.hidden)
+            .background(SavedFolderColors.background)
+            .safeAreaInset(edge: .bottom, spacing: 12) {
+                VStack(spacing: 8) {
+                    Text("フォルダーを長押し、または左にスワイプすると登録を解除できます。ファイルは削除されません。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                    Button { choosingSource = true } label: {
+                        Label("フォルダーを追加", systemImage: "plus.circle.fill")
+                            .font(.headline)
+                            .frame(maxWidth: .infinity, minHeight: 48)
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(.cyan)
+                    .frame(maxWidth: 430)
+                    .accessibilityIdentifier("saved.addFolder")
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 12)
+                .background(SavedFolderColors.background)
+                .overlay(alignment: .top) {
+                    Rectangle().fill(SavedFolderColors.border).frame(height: 1)
+                }
+            }
+            .navigationTitle("保存済みフォルダー")
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("閉じる") { dismiss() }
+                }
+            }
+            .alert(item: $pendingRemoval) { removal in
+                Alert(title: Text("登録を解除しますか？"),
+                      message: Text("保存済み一覧から外します。フォルダーやファイルは削除されません。"),
+                      primaryButton: .destructive(Text("登録解除")) {
+                          switch removal {
+                          case .local(let folder): onRemoveLocal(folder)
+                          case .dlna(let folder): folders.removeDLNA(folder)
+                          }
+                      }, secondaryButton: .cancel())
+            }
+        }
+        .savedFolderDialogStyle()
+        .accessibilityHidden(choosingSource)
+        if choosingSource {
+            AddFolderSourceDialog(isDLNAEnabled: isDLNAEnabled, choose: { action in
+                if case .addDLNA = action { isDLNAEnabled = true }
+                choosingSource = false
+                select(action)
+            }, close: { choosingSource = false })
+        }
+        }
+        .presentationBackground(Color.black.opacity(0.78))
+    }
+
+    private func folderRow(title: String, detail: String? = nil, icon: String) -> some View {
+        HStack(spacing: 16) {
+            Image(systemName: icon)
+                .foregroundStyle(.cyan).frame(width: 28)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .foregroundStyle(.primary)
+                    .lineLimit(3)
+                    .fixedSize(horizontal: false, vertical: true)
+                if let detail {
+                    Text(detail).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                }
+            }
+            Spacer(minLength: 0)
+            Image(systemName: "chevron.right").foregroundStyle(.cyan)
+        }
+        .frame(maxWidth: .infinity, minHeight: isCompactPhoneLandscape ? 40 : 44)
+        .contentShape(Rectangle())
+    }
+}
+
+private enum SavedFolderColors {
+    static let background = Color(red: 0.07, green: 0.10, blue: 0.20)
+    static let row = Color(red: 0.10, green: 0.14, blue: 0.25)
+    static let border = Color(red: 0.26, green: 0.32, blue: 0.44)
+}
+
+private extension View {
+    func savedFolderRowStyle(compact: Bool) -> some View {
+        self
+            .listRowBackground(SavedFolderColors.row)
+            .listRowSeparator(.hidden)
+            .listRowInsets(EdgeInsets(top: compact ? 0 : 4, leading: 16, bottom: compact ? 0 : 4, trailing: 16))
+    }
+
+    func savedFolderDialogStyle() -> some View {
+        self
+            .frame(maxWidth: 880, maxHeight: 800)
+            .background(SavedFolderColors.background)
+            .clipShape(RoundedRectangle(cornerRadius: 20))
+            .overlay { RoundedRectangle(cornerRadius: 20).strokeBorder(SavedFolderColors.border) }
+            .padding(12)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Color.black.opacity(0.78))
+            .preferredColorScheme(.dark)
+            .tint(.cyan)
+    }
+}
+
+private struct AddFolderSourceDialog: View {
+    let isDLNAEnabled: Bool
+    let choose: (FolderAction) -> Void
+    let close: () -> Void
+
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.65).ignoresSafeArea()
+                .onTapGesture { }
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 16) {
+                Text("保存済みフォルダー")
+                    .font(.caption.weight(.semibold)).tracking(2).foregroundStyle(.cyan)
+                Text("フォルダーを追加")
+                    .font(.title2.bold()).foregroundStyle(.white)
+                Text("追加するフォルダーの保存先を選んでください。")
+                    .font(.subheadline).foregroundStyle(Color(white: 0.78))
+                VStack(spacing: 8) {
+                    sourceRow(title: "端末のフォルダー", detail: "端末・外部ストレージから選択",
+                              icon: "folder.fill", identifier: "saved.source.local") {
+                        choose(.addLocal)
+                    }
+                    sourceRow(title: "DLNAサーバー",
+                              detail: isDLNAEnabled ? "NASのフォルダーを開いて登録" : "DLNA機能をオンにしてNASを開く",
+                              icon: "network", identifier: "saved.source.dlna") {
+                        choose(.addDLNA)
+                    }
+                }
+                Button("閉じる", action: close)
+                    .font(.headline).foregroundStyle(.white)
+                    .frame(maxWidth: .infinity, minHeight: 44)
+                    .background(Color.white.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
+                    .accessibilityIdentifier("saved.source.close")
+            }
+            .padding(22)
+            .frame(maxWidth: 430)
+            .background(SavedFolderColors.background, in: RoundedRectangle(cornerRadius: 20))
+            .overlay {
+                RoundedRectangle(cornerRadius: 20).strokeBorder(SavedFolderColors.border)
+            }
+            .shadow(color: .black.opacity(0.35), radius: 24, y: 12)
+            .padding(16)
+            .accessibilityElement(children: .contain)
+            .accessibilityAddTraits(.isModal)
+            .accessibilityIdentifier("saved.sourceDialog")
+        }
+    }
+
+    private func sourceRow(title: String, detail: String, icon: String, identifier: String,
+                           action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 14) {
+                Image(systemName: icon)
+                    .font(.title3).foregroundStyle(.cyan)
+                    .frame(width: 36)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(title).font(.headline).foregroundStyle(.white)
+                    Text(detail).font(.caption).foregroundStyle(Color(white: 0.74))
+                }
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.right").font(.caption.weight(.semibold))
+                    .foregroundStyle(Color(white: 0.7))
+            }
+            .frame(maxWidth: .infinity, minHeight: 56)
+            .padding(.horizontal, 12)
+            .background(Color.white.opacity(0.10), in: RoundedRectangle(cornerRadius: 12))
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier(identifier)
     }
 }
 
@@ -273,8 +668,9 @@ private struct SettingsView: View {
             } header: {
                 Text("DLNA")
             } footer: {
-                Text("オンにすると、ホームに「DLNAサーバーから選ぶ」が表示されます。")
+                Text("オフの間は保存済みDLNAフォルダーを隠します。「フォルダーを追加」でDLNAサーバーを選ぶと再びオンになります。")
             }
+            #if !targetEnvironment(macCatalyst)
             Section {
                 Toggle("標準ファイルダイアログを使う", isOn: $useSystemFilePicker)
                     .accessibilityIdentifier("settings.useSystemFilePicker")
@@ -283,6 +679,7 @@ private struct SettingsView: View {
             } footer: {
                 Text("オフ：検索窓のないアプリ内一覧を使います。\nオン：標準ファイルダイアログを使います。")
             }
+            #endif
         }
         .navigationTitle("設定")
         .navigationBarTitleDisplayMode(.inline)
@@ -348,7 +745,7 @@ private struct SystemMediaPicker: UIViewControllerRepresentable {
         // Validate the selected extension in MediaLibrary, rather than disabling the row here.
         let types: [UTType] = folder ? [.folder] : [.data]
         let controller = UIDocumentPickerViewController(forOpeningContentTypes: types, asCopy: false)
-        controller.title = folder ? "USBストレージへのアクセスを許可" : "開始ファイルを選ぶ"
+        controller.title = folder ? "フォルダーを追加" : "開始ファイルを選ぶ"
         controller.directoryURL = directory
         controller.allowsMultipleSelection = false
         controller.delegate = context.coordinator

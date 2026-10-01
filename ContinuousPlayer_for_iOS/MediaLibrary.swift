@@ -11,6 +11,9 @@ final class MediaLibrary {
     var error: String?
     private(set) var needsFolderPermission = false
     private var scopedURL: URL?
+    #if targetEnvironment(macCatalyst)
+    private var scopedFileURL: URL?
+    #endif
     private(set) var folderURL: URL?
     private(set) var currentDirectoryURL: URL?
     private let bookmarkKey: String
@@ -35,7 +38,12 @@ final class MediaLibrary {
         needsFolderPermission = false
         do {
             var stale = false
-            let url = try URL(resolvingBookmarkData: data, options: .withoutUI, relativeTo: nil, bookmarkDataIsStale: &stale)
+            #if targetEnvironment(macCatalyst)
+            let options: URL.BookmarkResolutionOptions = [.withoutUI, .withSecurityScope]
+            #else
+            let options: URL.BookmarkResolutionOptions = .withoutUI
+            #endif
+            let url = try URL(resolvingBookmarkData: data, options: options, relativeTo: nil, bookmarkDataIsStale: &stale)
             await open(url, loadPlaylist: loadPlaylist)
         } catch {
             self.error = "保存したフォルダーを開けません。フォルダーを選び直してください。"
@@ -62,9 +70,13 @@ final class MediaLibrary {
                 playback.setPlaylist(files)
             }
             if persist {
-                // iOS implicitly preserves the picker URL's security scope in its bookmark.
-                // .withSecurityScope is a macOS-only option and is unavailable on iOS.
-                let data = try url.bookmarkData(options: .minimalBookmark, includingResourceValuesForKeys: nil, relativeTo: nil)
+                #if targetEnvironment(macCatalyst)
+                let options: URL.BookmarkCreationOptions = [.withSecurityScope, .securityScopeAllowOnlyReadAccess]
+                #else
+                // iOS implicitly preserves the picker URL's security scope.
+                let options: URL.BookmarkCreationOptions = .minimalBookmark
+                #endif
+                let data = try url.bookmarkData(options: options, includingResourceValuesForKeys: nil, relativeTo: nil)
                 defaults.set(data, forKey: bookmarkKey)
             }
         } catch {
@@ -123,15 +135,23 @@ final class MediaLibrary {
             return
         }
         let accessing = selectedURL.startAccessingSecurityScopedResource()
+        #if targetEnvironment(macCatalyst)
+        let previousFileScope = scopedFileURL
+        scopedFileURL = accessing ? selectedURL : nil
+        previousFileScope?.stopAccessingSecurityScopedResource()
+        #else
         defer { if accessing { selectedURL.stopAccessingSecurityScopedResource() } }
+        #endif
         do {
             let parent = selectedURL.deletingLastPathComponent()
+            #if !targetEnvironment(macCatalyst)
             let parentPath = parent.standardizedFileURL.resolvingSymlinksInPath().path
             guard let folderURL else { throw CocoaError(.fileReadNoPermission) }
             let allowedPath = folderURL.standardizedFileURL.resolvingSymlinksInPath().path
             guard parentPath == allowedPath || parentPath.hasPrefix(allowedPath + "/") else {
                 throw CocoaError(.fileReadNoPermission)
             }
+            #endif
             let sorted = try await MediaScanner.scan(parent)
             guard let selected = sorted.first(where: {
                 $0.standardizedFileURL.resolvingSymlinksInPath() == selectedURL.standardizedFileURL.resolvingSymlinksInPath()
@@ -146,13 +166,41 @@ final class MediaLibrary {
             playback.select(selected, autoplay: autoplay)
         } catch {
             needsFolderPermission = PlaybackController.isAccessFailure(error)
+            #if targetEnvironment(macCatalyst)
+            self.error = needsFolderPermission
+                ? "同じフォルダーのファイルを連続再生するには、「\(selectedURL.deletingLastPathComponent().lastPathComponent)」フォルダーを選択してください。選択したフォルダーは次回も使用できます。"
+                : "同じフォルダーのファイルを読み込めません。\(error.localizedDescription)"
+            #else
             self.error = needsFolderPermission
                 ? "ホームの「USBストレージへのアクセスを許可」で、選択したファイルのフォルダーを許可してください。"
                 : "同じフォルダーのファイルを読み込めません。\(error.localizedDescription)"
+            #endif
         }
     }
 
     func stop() { playback.setPlaylist(files) }
 
-    isolated deinit { scopedURL?.stopAccessingSecurityScopedResource() }
+    func forgetFolder() {
+        playback.setPlaylist([])
+        files = []
+        folderURL = nil
+        currentDirectoryURL = nil
+        folderName = ""
+        error = nil
+        needsFolderPermission = false
+        scopedURL?.stopAccessingSecurityScopedResource()
+        scopedURL = nil
+        #if targetEnvironment(macCatalyst)
+        scopedFileURL?.stopAccessingSecurityScopedResource()
+        scopedFileURL = nil
+        #endif
+        defaults.removeObject(forKey: bookmarkKey)
+    }
+
+    isolated deinit {
+        scopedURL?.stopAccessingSecurityScopedResource()
+        #if targetEnvironment(macCatalyst)
+        scopedFileURL?.stopAccessingSecurityScopedResource()
+        #endif
+    }
 }

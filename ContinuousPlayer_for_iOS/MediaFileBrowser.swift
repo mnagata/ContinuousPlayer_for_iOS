@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// Browses only inside the folder whose security scope MediaLibrary retains.
 struct MediaFileBrowser: View {
@@ -6,7 +7,8 @@ struct MediaFileBrowser: View {
     let initialDirectory: URL
     let initialFile: URL?
     let select: (URL) -> Void
-    @Environment(\.dismiss) private var dismiss
+    let cancel: () -> Void
+    @State private var isCompactPhoneLandscape = false
     @State private var directory: URL?
     @State private var folders: [URL] = []
     @State private var files: [URL] = []
@@ -36,36 +38,69 @@ struct MediaFileBrowser: View {
                 } else {
                     ScrollViewReader { proxy in
                         List {
-                            ForEach(folders, id: \.self) { url in
-                                Button {
-                                    returnFolderPath = nil
-                                    directory = url
-                                } label: {
-                                    HStack {
-                                        Image(systemName: "folder.fill")
-                                        Text(url.lastPathComponent).foregroundStyle(.primary).lineLimit(2)
-                                        Spacer(minLength: 8)
-                                        Image(systemName: "chevron.right").foregroundStyle(.secondary)
+                            if !folders.isEmpty {
+                                Section("フォルダー") {
+                                    ForEach(folders, id: \.self) { url in
+                                        Button {
+                                            returnFolderPath = nil
+                                            directory = url
+                                        } label: {
+                                            HStack(spacing: 16) {
+                                                Image(systemName: "folder.fill")
+                                                    .foregroundStyle(.cyan).frame(width: 28)
+                                                Text(url.lastPathComponent)
+                                                    .foregroundStyle(.primary)
+                                                    .lineLimit(3)
+                                                    .fixedSize(horizontal: false, vertical: true)
+                                                Spacer(minLength: 0)
+                                                Image(systemName: "chevron.right").foregroundStyle(.cyan)
+                                            }
+                                            .frame(maxWidth: .infinity, minHeight: isCompactPhoneLandscape ? 40 : 44)
+                                            .contentShape(Rectangle())
+                                        }
+                                        .buttonStyle(.plain)
+                                        .mediaBrowserRowStyle(compact: isCompactPhoneLandscape)
+                                        .id(url.standardizedFileURL.path)
                                     }
-                                    .frame(minHeight: 32).contentShape(Rectangle())
                                 }
-                                .id(url.standardizedFileURL.path)
                             }
-                            ForEach(files, id: \.self) { url in
-                                Button { select(url) } label: {
-                                    HStack(spacing: 12) {
-                                        Image(systemName: "play.circle")
-                                        Text(url.lastPathComponent)
-                                            .foregroundStyle(.primary).lineLimit(2)
-                                            .frame(maxWidth: .infinity, alignment: .leading)
+                            if !files.isEmpty {
+                                Section {
+                                    ForEach(files, id: \.self) { url in
+                                        Button { select(url) } label: {
+                                            HStack(spacing: 16) {
+                                                Image(systemName: "play.circle")
+                                                    .foregroundStyle(.cyan).frame(width: 28)
+                                                Text(url.lastPathComponent)
+                                                    .foregroundStyle(.primary)
+                                                    .lineLimit(3)
+                                                    .fixedSize(horizontal: false, vertical: true)
+                                                Spacer(minLength: 0)
+                                            }
+                                            .frame(maxWidth: .infinity, minHeight: isCompactPhoneLandscape ? 40 : 44)
+                                            .contentShape(Rectangle())
+                                        }
+                                        .buttonStyle(.plain)
+                                        .mediaBrowserRowStyle(compact: isCompactPhoneLandscape)
+                                        .id(url.standardizedFileURL.path)
+                                        .accessibilityLabel("\(url.lastPathComponent)を選択")
                                     }
-                                    .frame(minHeight: 32).contentShape(Rectangle())
+                                } header: {
+                                    Text("\(files.count)件 · OP / ED順").foregroundStyle(.cyan)
+                                } footer: {
+                                    Text("選んだファイルから、このフォルダーの対象ファイルを最後まで再生します。")
                                 }
-                                .id(url.standardizedFileURL.path)
-                                .accessibilityLabel("\(url.lastPathComponent)を選択")
                             }
                         }
                         .listStyle(.plain)
+                        .environment(\.defaultMinListRowHeight, isCompactPhoneLandscape ? 40 : 44)
+                        .onGeometryChange(for: Bool.self) { geometry in
+                            UIDevice.current.userInterfaceIdiom == .phone && geometry.size.width > geometry.size.height
+                        } action: { _, isLandscape in
+                            isCompactPhoneLandscape = isLandscape
+                        }
+                        .scrollContentBackground(.hidden)
+                        .background(MediaBrowserColors.background)
                         .accessibilityIdentifier("picker.customList")
                         .onAppear {
                             // Restore the departed folder first, or the playback file on initial opening.
@@ -83,11 +118,11 @@ struct MediaFileBrowser: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(MediaBrowserColors.background)
             .navigationTitle(current.lastPathComponent)
-            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    Button("キャンセル", role: .cancel) { dismiss() }
+                    Button("キャンセル", role: .cancel, action: cancel)
                         .accessibilityIdentifier("picker.cancel")
                 }
                 ToolbarItem(placement: .topBarTrailing) {
@@ -103,6 +138,7 @@ struct MediaFileBrowser: View {
             }
             .task(id: current) { await load() }
         }
+        .mediaBrowserDialogStyle()
     }
 
     private func load() async {
@@ -119,5 +155,32 @@ struct MediaFileBrowser: View {
             self.error = "USBストレージの接続を確認してください。\(error.localizedDescription)"
         }
         isLoading = false
+    }
+}
+
+private enum MediaBrowserColors {
+    static let background = Color(red: 0.07, green: 0.10, blue: 0.20)
+    static let row = Color(red: 0.10, green: 0.14, blue: 0.25)
+}
+
+private extension View {
+    func mediaBrowserRowStyle(compact: Bool) -> some View {
+        self
+            .listRowBackground(MediaBrowserColors.row)
+            .listRowSeparator(.hidden)
+            .listRowInsets(EdgeInsets(top: compact ? 0 : 4, leading: 16, bottom: compact ? 0 : 4, trailing: 16))
+    }
+
+    func mediaBrowserDialogStyle() -> some View {
+        self
+            .frame(maxWidth: 880, maxHeight: 800)
+            .background(MediaBrowserColors.background)
+            .clipShape(RoundedRectangle(cornerRadius: 20))
+            .overlay { RoundedRectangle(cornerRadius: 20).strokeBorder(Color(red: 0.26, green: 0.32, blue: 0.44)) }
+            .padding(12)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Color.black.opacity(0.78))
+            .preferredColorScheme(.dark)
+            .tint(.cyan)
     }
 }

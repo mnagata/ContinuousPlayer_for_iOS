@@ -1,79 +1,82 @@
 import SwiftUI
+import UIKit
 
 struct DLNABrowser: View {
     let registeredFolders: RegisteredFolders
     let initialFolder: RegisteredDLNAFolder?
+    let onRegistered: () -> Void
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
     @State private var playback = PlaybackController()
     @State private var selection: Selection?
+    @State private var playingFolderName = ""
+    @State private var showingPlayerFileBrowser = false
     @State private var returnHome = false
     @State private var folderPath: [Folder] = []
     @State private var lastSelections: [Folder: String] = [:]
     @State private var reconnectError: String?
-    @State private var isReconnecting = false
+    @State private var isReconnecting = true
+    @State private var showServerSelection = false
     private let client = DLNAClient()
 
-    init(registeredFolders: RegisteredFolders, initialFolder: RegisteredDLNAFolder? = nil) {
+    init(registeredFolders: RegisteredFolders, initialFolder: RegisteredDLNAFolder? = nil,
+         onRegistered: @escaping () -> Void = {}) {
         self.registeredFolders = registeredFolders
         self.initialFolder = initialFolder
+        self.onRegistered = onRegistered
     }
 
     private struct Selection: Identifiable {
         let id = UUID()
-        let folderName: String
     }
     private struct Folder: Hashable {
         let server: DLNAServer
-        let objectID: String
-        let title: String
+        let path: [RegisteredDLNAPath]
+
+        var objectID: String { path.last?.id ?? "0" }
+        var title: String { path.last?.title ?? server.name }
     }
 
     var body: some View {
         NavigationStack(path: $folderPath) {
-            DLNAServersView(client: client) { server in
-                Folder(server: server, objectID: "0", title: server.name)
+            Group {
+                if let initialFolder, !showServerSelection {
+                    savedFolderRoot(initialFolder)
+                } else {
+                    DLNAServersView(client: client) { server in
+                        Folder(server: server, path: [RegisteredDLNAPath(id: "0", title: server.name)])
+                    }
+                }
             }
             .navigationDestination(for: Folder.self) { folder in
                 DLNAFolderView(client: client, server: folder.server, objectID: folder.objectID,
                                title: folder.title,
                                registeredFolders: registeredFolders,
-                               registrationPath: registrationPath(to: folder),
+                               registrationPath: folder.path,
+                               canRegisterFolder: initialFolder == nil || showServerSelection,
+                               onRegistered: onRegistered,
                                lastSelectionID: Binding(get: { lastSelections[folder] },
                                                         set: { lastSelections[folder] = $0 }),
                                openFolder: { entry in
                     lastSelections[folder] = entry.id
-                    folderPath.append(Folder(server: folder.server, objectID: entry.id, title: entry.title))
+                    folderPath.append(Folder(server: folder.server,
+                                             path: folder.path + [RegisteredDLNAPath(id: entry.id, title: entry.title)]))
                 }) { entries, selected in
-                    var urls: [URL] = []
-                    var names: [URL: String] = [:]
-                    var sizes: [URL: Int64] = [:]
-                    // Different object IDs can refer to the same stream. Preserve its first slot.
-                    for entry in entries {
-                        guard let url = entry.resourceURL, names[url] == nil else { continue }
-                        urls.append(url)
-                        names[url] = entry.title
-                        sizes[url] = entry.size
-                    }
-                    guard let url = selected.resourceURL else { return }
-                    playback.setPlaylist(urls, displayNames: names, sizes: sizes)
-                    playback.select(url, autoplay: false)
-                    selection = Selection(folderName: "\(folder.server.name) / \(folder.title)")
+                    selectFile(entries, selected: selected, in: folder, presentPlayer: true)
                 }
                 .toolbar { cancelToolbar }
             }
             .toolbar { cancelToolbar }
         }
-        .overlay { if isReconnecting { ProgressView("保存したDLNAフォルダーに接続中…") } }
-        .alert("保存したフォルダーを開けません", isPresented: Binding(get: { reconnectError != nil }, set: { if !$0 { reconnectError = nil } })) {
-            Button("閉じる", role: .cancel) { reconnectError = nil }
-        } message: { Text(reconnectError ?? "") }
+        .dlnaDialogContainer()
         .task(id: initialFolder?.id) { await openInitialFolder() }
         .fullScreenCover(item: $selection, onDismiss: {
+            showingPlayerFileBrowser = false
             playback.setPlaylist([])
             if returnHome { dismiss() }
-        }) { selection in
-            playerScreen(playback: playback, folderName: selection.folderName) {
+        }) { _ in
+            #if os(tvOS)
+            playerScreen(playback: playback, folderName: playingFolderName) {
                 playback.pause()
                 returnHome = true
                 self.selection = nil
@@ -81,6 +84,29 @@ struct DLNABrowser: View {
                 playback.pause()
                 self.selection = nil
             }
+            #else
+            ZStack {
+                PlayerScreen(playback: playback, folderName: playingFolderName,
+                             home: {
+                                 playback.pause()
+                                 returnHome = true
+                                 selection = nil
+                             }, chooseFolder: {
+                                 playback.pause()
+                                 showingPlayerFileBrowser = true
+                             }, browsingFiles: showingPlayerFileBrowser)
+                    .accessibilityHidden(showingPlayerFileBrowser)
+                if showingPlayerFileBrowser, let folder = folderPath.last {
+                    PlaybackFileBrowser(client: client, initialFolder: folder,
+                                        registeredFolders: registeredFolders,
+                                        lastSelections: $lastSelections,
+                                        cancel: { showingPlayerFileBrowser = false }) { entries, selected, folder in
+                        selectFile(entries, selected: selected, in: folder, presentPlayer: false)
+                    }
+                    .accessibilityIdentifier("player.dlnaFileBrowserOverlay")
+                }
+            }
+            #endif
         }
         .onChange(of: scenePhase, initial: true) { _, phase in
             #if targetEnvironment(macCatalyst)
@@ -92,19 +118,111 @@ struct DLNABrowser: View {
         }
     }
 
-    private func registrationPath(to folder: Folder) -> [RegisteredDLNAPath] {
-        guard let index = folderPath.firstIndex(of: folder) else { return [] }
-        return folderPath[...index].map { RegisteredDLNAPath(id: $0.objectID, title: $0.title) }
+    private func selectFile(_ entries: [DLNAEntry], selected: DLNAEntry,
+                            in folder: Folder, presentPlayer: Bool) {
+        var urls: [URL] = []
+        var names: [URL: String] = [:]
+        var sizes: [URL: Int64] = [:]
+        // Different object IDs can refer to the same stream. Preserve its first slot.
+        for entry in entries {
+            guard let url = entry.resourceURL, names[url] == nil else { continue }
+            urls.append(url)
+            names[url] = entry.title
+            sizes[url] = entry.size
+        }
+        guard let url = selected.resourceURL else { return }
+        playback.setPlaylist(urls, displayNames: names, sizes: sizes)
+        playback.select(url, autoplay: false)
+        playingFolderName = "\(folder.server.name) / \(folder.title)"
+        if presentPlayer { selection = Selection() }
+        else {
+            folderPath = folder.path.indices.map { index in
+                Folder(server: folder.server, path: Array(folder.path[...index]))
+            }
+            showingPlayerFileBrowser = false
+        }
+    }
+
+    #if !os(tvOS)
+    private struct PlaybackFileBrowser: View {
+        let client: DLNAClient
+        let initialFolder: Folder
+        let registeredFolders: RegisteredFolders
+        @Binding var lastSelections: [Folder: String]
+        let cancel: () -> Void
+        let select: ([DLNAEntry], DLNAEntry, Folder) -> Void
+        @State private var path: [Folder] = []
+
+        var body: some View {
+            NavigationStack(path: $path) {
+                folderView(initialFolder)
+                    .navigationDestination(for: Folder.self) { folder in
+                        folderView(folder)
+                    }
+            }
+            .dlnaDialogContainer()
+        }
+
+        private func folderView(_ folder: Folder) -> some View {
+            DLNAFolderView(client: client, server: folder.server, objectID: folder.objectID,
+                           title: folder.title, registeredFolders: registeredFolders,
+                           registrationPath: folder.path, canRegisterFolder: false,
+                           onRegistered: {},
+                           lastSelectionID: Binding(get: { lastSelections[folder] },
+                                                    set: { lastSelections[folder] = $0 }),
+                           openFolder: { entry in
+                lastSelections[folder] = entry.id
+                path.append(Folder(server: folder.server,
+                                   path: folder.path + [RegisteredDLNAPath(id: entry.id, title: entry.title)]))
+            }) { entries, selected in
+                select(entries, selected, folder)
+            }
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("キャンセル", role: .cancel, action: cancel)
+                        .accessibilityIdentifier("dlna.cancel")
+                }
+            }
+        }
+    }
+    #endif
+
+    private func savedFolderRoot(_ folder: RegisteredDLNAFolder) -> some View {
+        VStack(spacing: 16) {
+            Image(systemName: "network").font(.largeTitle).foregroundStyle(.cyan)
+            Text(folder.name).font(.title3.bold()).multilineTextAlignment(.center)
+            if isReconnecting {
+                ProgressView("保存したDLNAフォルダーに接続中…")
+            } else if let reconnectError {
+                Text(reconnectError).foregroundStyle(.orange).multilineTextAlignment(.center)
+                Button("再接続") { Task { await openInitialFolder() } }
+            } else {
+                Button("保存したフォルダーを開く") { Task { await openInitialFolder() } }
+            }
+            Button("DLNAサーバーを選ぶ") { showServerSelection = true }
+                .disabled(isReconnecting)
+        }
+        .padding(24)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .navigationTitle("保存済みDLNAフォルダー")
+        .dlnaNavigationTitleStyle()
+        .dlnaBrowserBackground()
     }
 
     private func openInitialFolder() async {
         guard let initialFolder else { return }
         isReconnecting = true
+        reconnectError = nil
         defer { isReconnecting = false }
         do {
             let server = try await reconnect(initialFolder)
-            guard !initialFolder.path.isEmpty else { return }
-            folderPath = initialFolder.path.map { Folder(server: server, objectID: $0.id, title: $0.title) }
+            try Task.checkCancellation()
+            guard !initialFolder.path.isEmpty else {
+                throw DLNAError.message("保存されたフォルダーの階層情報がありません。")
+            }
+            folderPath = initialFolder.path.indices.map { index in
+                Folder(server: server, path: Array(initialFolder.path[...index]))
+            }
         } catch {
             reconnectError = "\(initialFolder.serverName)への接続を確認してください。\(error.localizedDescription)"
         }
@@ -162,6 +280,10 @@ private struct DLNAServersView<Destination: Hashable>: View {
     @State private var isConnecting = false
     @State private var connectionError: DLNAConnectionIssue?
     @FocusState private var editingAddress: Bool
+    @FocusState private var focusedServerID: String?
+    #if os(tvOS)
+    @FocusState private var isConnectFocused: Bool
+    #endif
     private let canDiscover = DLNADiscovery.isAvailable
 
     private struct Connection: Equatable {
@@ -171,6 +293,65 @@ private struct DLNAServersView<Destination: Hashable>: View {
 
     var body: some View {
         List {
+            Section {
+                VStack(alignment: .leading, spacing: 7) {
+                    Text("NAS / DLNA")
+                        .font(.caption.weight(.semibold)).tracking(2).dlnaSectionHeadingStyle()
+                    Text("DLNAサーバーを選ぶ")
+                        .font(.title2.bold())
+                    Text("サーバー \(servers.count)台 · 同じLANにあるNASを選んでください。")
+                        .font(.subheadline).foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .listRowBackground(Color.clear)
+            }
+            Section {
+                ForEach(servers) { server in
+                    NavigationLink(value: destination(server)) {
+                        HStack(spacing: 16) {
+                            Image(systemName: "network")
+                                .font(.title2)
+                                .foregroundStyle(serverRowAccent(for: server.id))
+                                .frame(width: 28)
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(server.name).font(.headline)
+                                    .foregroundStyle(serverRowText(for: server.id))
+                                Text("DLNAサーバー · \(server.controlURL.host ?? server.descriptionURL.host ?? "NAS")")
+                                    .font(.caption)
+                                    .foregroundStyle(serverRowDetail(for: server.id))
+                            }
+                            Spacer(minLength: 0)
+                        }
+                        .frame(maxWidth: .infinity, minHeight: 56)
+                        .dlnaFocusedRowBackground(focused: focusedServerID == server.id)
+                        .contentShape(Rectangle())
+                    }
+                    .dlnaTVPlainButtonStyle()
+                    .focused($focusedServerID, equals: server.id)
+                    .dlnaFocusEffectStyle()
+                    .accessibilityLabel(server.name)
+                }
+                if canDiscover {
+                    if isLoading { ProgressView("DLNAサーバーを検索中…") }
+                    if !isLoading && servers.isEmpty {
+                        Text("サーバーが見つからない場合は、下の欄にNASのIPアドレスを入力して接続してください。")
+                            .foregroundStyle(.secondary)
+                    }
+                    if let error { Text(error).foregroundStyle(.orange) }
+                    Button("再検索") { refreshID = UUID() }
+                        .disabled(isLoading)
+                        .accessibilityIdentifier("dlna.refreshServers")
+                } else if servers.isEmpty {
+                    Text("このアプリでは自動検索を利用できません。下の欄にNASのIPアドレスを入力して接続してください。")
+                        .foregroundStyle(.secondary)
+                        .accessibilityIdentifier("dlna.directConnectionNotice")
+                }
+            } header: { Text("サーバー").dlnaSectionHeadingStyle() }
+            footer: {
+                Text("初回はローカルネットワークへのアクセスを許可してください。拒否した場合は、設定アプリのContinuousPlayerで許可できます。")
+                    .dlnaSupportingTextStyle()
+            }
+            .dlnaSettingsSectionStyle()
             Section {
                 HStack {
                     TextField("NASのIPアドレス（例: 192.168.1.10）", text: $address)
@@ -195,9 +376,21 @@ private struct DLNAServersView<Destination: Hashable>: View {
                     }
                 }
                 .disabled(isConnecting)
+                #if os(tvOS)
+                Button(action: connect) {
+                    TVFolderDialogAction(title: "接続", systemImage: "link", isFocused: isConnectFocused)
+                }
+                .buttonStyle(.plain)
+                .focused($isConnectFocused)
+                .focusEffectDisabled()
+                .frame(maxWidth: .infinity)
+                .disabled(isConnecting || address.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .accessibilityIdentifier("dlna.connect")
+                #else
                 Button("接続", action: connect)
                     .disabled(isConnecting || address.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     .accessibilityIdentifier("dlna.connect")
+                #endif
                 if let target = DLNAClient.descriptionURL(for: address) {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("接続先: \(target.host ?? "") · ポート \(String(target.port ?? (target.scheme == "https" ? 443 : 80)))")
@@ -239,33 +432,6 @@ private struct DLNAServersView<Destination: Hashable>: View {
             } header: { Text("Synology NASに接続").dlnaSectionHeadingStyle() }
             footer: {
                 Text("SynologyではIPアドレスだけで接続できます（標準ポート50001）。ポートを指定する場合は「192.168.1.10:50001」の形式で入力してください。接続先は保存されます。ほかのDLNAサーバーはデバイス記述XMLのURLを入力できます。")
-                    .dlnaSupportingTextStyle()
-            }
-            .dlnaSettingsSectionStyle()
-            Section {
-                ForEach(servers) { server in
-                    NavigationLink(value: destination(server)) {
-                        Label(server.name, systemImage: "externaldrive.connected.to.line.below")
-                    }
-                }
-                if canDiscover {
-                    if isLoading { ProgressView("DLNAサーバーを検索中…") }
-                    if !isLoading && servers.isEmpty {
-                        Text("サーバーが見つからない場合は、上の欄にNASのIPアドレスを入力して接続してください。")
-                            .foregroundStyle(.secondary)
-                    }
-                    if let error { Text(error).foregroundStyle(.orange) }
-                    Button("再検索") { refreshID = UUID() }
-                        .disabled(isLoading)
-                        .accessibilityIdentifier("dlna.refreshServers")
-                } else if servers.isEmpty {
-                    Text("このアプリでは自動検索を利用できません。上の欄にNASのIPアドレスを入力して接続してください。")
-                        .foregroundStyle(.secondary)
-                        .accessibilityIdentifier("dlna.directConnectionNotice")
-                }
-            } header: { Text("サーバー").dlnaSectionHeadingStyle() }
-            footer: {
-                Text("初回はローカルネットワークへのアクセスを許可してください。拒否した場合は、設定アプリのContinuousPlayerで許可できます。")
                     .dlnaSupportingTextStyle()
             }
             .dlnaSettingsSectionStyle()
@@ -317,6 +483,30 @@ private struct DLNAServersView<Destination: Hashable>: View {
         connection = Connection(address: value)
     }
 
+    private func serverRowText(for id: String) -> Color {
+        #if os(tvOS)
+        focusedServerID == id ? .black : .white
+        #else
+        .primary
+        #endif
+    }
+
+    private func serverRowDetail(for id: String) -> Color {
+        #if os(tvOS)
+        focusedServerID == id ? Color(white: 0.25) : Color(white: 0.75)
+        #else
+        .secondary
+        #endif
+    }
+
+    private func serverRowAccent(for id: String) -> Color {
+        #if os(tvOS)
+        focusedServerID == id ? TVFolderColors.focusAccent : TVFolderColors.accent
+        #else
+        .cyan
+        #endif
+    }
+
     private func add(_ server: DLNAServer) {
         servers.removeAll { $0.id == server.id }
         servers.append(server)
@@ -361,15 +551,21 @@ private struct DLNAFolderView: View {
     let title: String
     let registeredFolders: RegisteredFolders
     let registrationPath: [RegisteredDLNAPath]
+    let canRegisterFolder: Bool
+    let onRegistered: () -> Void
     @Binding var lastSelectionID: String?
     let openFolder: (DLNAEntry) -> Void
     let play: ([DLNAEntry], DLNAEntry) -> Void
+    @State private var isCompactPhoneLandscape = false
     @State private var entries: [DLNAEntry] = []
     @State private var isLoading = true
     @State private var error: String?
     @State private var refreshID = UUID()
     @State private var loadedRefreshID: UUID?
     @FocusState private var focusedEntryID: String?
+    #if os(tvOS)
+    @FocusState private var isRegisterFocused: Bool
+    #endif
     private var folders: [DLNAEntry] { entries.filter(\.isContainer) }
     private var playable: [DLNAEntry] { entries.filter { !$0.isContainer && $0.resourceURL != nil } }
 
@@ -385,10 +581,28 @@ private struct DLNAFolderView: View {
                         Section("フォルダー") {
                             ForEach(folders) { entry in
                                 Button { openFolder(entry) } label: {
-                                    Label(entry.title, systemImage: "folder")
+                                    HStack(spacing: 16) {
+                                        Image(systemName: "folder.fill")
+                                            .foregroundStyle(entryAccent(for: entry.id)).frame(width: 28)
+                                        Text(entry.title)
+                                            .foregroundStyle(entryText(for: entry.id))
+                                            .lineLimit(3)
+                                            .fixedSize(horizontal: false, vertical: true)
+                                        Spacer(minLength: 0)
+                                        Image(systemName: "chevron.right")
+                                            .foregroundStyle(entryAccent(for: entry.id))
+                                    }
+                                    .frame(maxWidth: .infinity, minHeight: isCompactPhoneLandscape ? 40 : 44)
+                                    .dlnaFocusedRowBackground(focused: focusedEntryID == entry.id)
+                                    .contentShape(Rectangle())
                                 }
+                                .dlnaFolderButtonStyle()
+                                .dlnaEntryRowStyle()
+                                .dlnaCompactRowInsets(compact: isCompactPhoneLandscape)
                                 .id(entry.id)
                                 .focused($focusedEntryID, equals: entry.id)
+                                .dlnaFocusEffectStyle()
+                                .accessibilityIdentifier("dlna.folder.\(entry.id)")
                             }
                         }
                     }
@@ -399,11 +613,25 @@ private struct DLNAFolderView: View {
                                     lastSelectionID = entry.id
                                     play(playable, entry)
                                 } label: {
-                                    Label(entry.title, systemImage: "play.circle")
-                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                    HStack(spacing: 16) {
+                                        Image(systemName: "play.circle")
+                                            .foregroundStyle(entryAccent(for: entry.id)).frame(width: 28)
+                                        Text(entry.title)
+                                            .foregroundStyle(entryText(for: entry.id))
+                                            .lineLimit(3)
+                                            .fixedSize(horizontal: false, vertical: true)
+                                        Spacer(minLength: 0)
+                                    }
+                                    .frame(maxWidth: .infinity, minHeight: isCompactPhoneLandscape ? 40 : 44)
+                                    .dlnaFocusedRowBackground(focused: focusedEntryID == entry.id)
+                                    .contentShape(Rectangle())
                                 }
+                                .dlnaFolderButtonStyle()
+                                .dlnaEntryRowStyle()
+                                .dlnaCompactRowInsets(compact: isCompactPhoneLandscape)
                                 .id(entry.id)
                                 .focused($focusedEntryID, equals: entry.id)
+                                .dlnaFocusEffectStyle()
                                 .accessibilityLabel("\(entry.title)から連続再生")
                             }
                         } header: { Text("\(playable.count)件 · OP / ED順") }
@@ -414,6 +642,15 @@ private struct DLNAFolderView: View {
                     }
                 }
             }
+            .dlnaFolderListStyle()
+            .dlnaPhoneRowHeight(isCompactPhoneLandscape)
+            #if !os(tvOS)
+            .onGeometryChange(for: Bool.self) { geometry in
+                UIDevice.current.userInterfaceIdiom == .phone && geometry.size.width > geometry.size.height
+            } action: { _, isLandscape in
+                isCompactPhoneLandscape = isLandscape
+            }
+            #endif
             .task(id: isLoading) {
                 // NavigationStack may recreate the parent; restore by the server's stable object ID.
                 guard !isLoading, error == nil, let id = lastSelectionID,
@@ -429,19 +666,62 @@ private struct DLNAFolderView: View {
         .navigationTitle(title).dlnaNavigationTitleStyle()
         .dlnaBrowserBackground()
         .toolbar {
-            #if !os(tvOS)
-            ToolbarItem(placement: .primaryAction) {
-                Button(registeredFolders.contains(server, objectID: objectID) ? "登録解除" : "登録",
-                       systemImage: registeredFolders.contains(server, objectID: objectID) ? "bookmark.slash" : "bookmark") {
-                    registeredFolders.toggleDLNA(server: server, path: registrationPath)
-                }
-                .disabled(registrationPath.isEmpty)
-                .accessibilityIdentifier("dlna.registerFolder")
-            }
-            #endif
+            #if os(tvOS)
             ToolbarItem(placement: .primaryAction) {
                 Button("再読み込み", systemImage: "arrow.clockwise") { refreshID = UUID() }
                     .disabled(isLoading)
+            }
+            #else
+            if !canRegisterFolder {
+                ToolbarItem(placement: .primaryAction) {
+                    Button("再読み込み", systemImage: "arrow.clockwise") { refreshID = UUID() }
+                        .disabled(isLoading)
+                }
+            }
+            #endif
+        }
+        .safeAreaInset(edge: .bottom) {
+            if canRegisterFolder {
+                #if os(tvOS)
+                VStack(spacing: 10) {
+                    Text(isRegistered ? "このフォルダーは保存済みです。" : "現在開いているフォルダーを保存済み一覧に追加します。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Button(action: toggleRegistration) {
+                        TVFolderDialogAction(title: isRegistered ? "登録解除" : "このフォルダーを登録",
+                                             systemImage: isRegistered ? "bookmark.slash" : "bookmark.fill",
+                                             isFocused: isRegisterFocused,
+                                             fill: isRegistered ? TVFolderColors.removal : TVFolderColors.action)
+                    }
+                    .buttonStyle(.plain)
+                    .focused($isRegisterFocused)
+                    .focusEffectDisabled()
+                    .accessibilityIdentifier("dlna.registerFolder")
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 18)
+                .background(Color(red: 0.07, green: 0.10, blue: 0.20))
+                .overlay(alignment: .top) {
+                    Rectangle().fill(Color(red: 0.26, green: 0.32, blue: 0.44)).frame(height: 1)
+                }
+                #else
+                HStack(spacing: 12) {
+                    Button(action: toggleRegistration) {
+                        Label(isRegistered ? "登録解除" : "このフォルダーを登録",
+                              systemImage: isRegistered ? "bookmark.slash" : "bookmark")
+                            .frame(maxWidth: .infinity, minHeight: 48)
+                    }
+                    .accessibilityIdentifier("dlna.registerFolder")
+                    Button("再読み込み", systemImage: "arrow.clockwise") { refreshID = UUID() }
+                        .frame(minHeight: 48)
+                        .disabled(isLoading)
+                }
+                .buttonStyle(.bordered)
+                .tint(.cyan)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+                .background(Color(red: 0.07, green: 0.10, blue: 0.20))
+                #endif
             }
         }
         .task(id: refreshID) {
@@ -462,24 +742,158 @@ private struct DLNAFolderView: View {
             }
         }
     }
+
+    private var isRegistered: Bool {
+        registeredFolders.contains(server, objectID: objectID)
+    }
+
+    private func entryText(for id: String) -> Color {
+        #if os(tvOS)
+        focusedEntryID == id ? .black : .white
+        #else
+        .primary
+        #endif
+    }
+
+    private func entryAccent(for id: String) -> Color {
+        #if os(tvOS)
+        focusedEntryID == id ? TVFolderColors.focusAccent : TVFolderColors.accent
+        #else
+        .cyan
+        #endif
+    }
+
+    private func toggleRegistration() {
+        let wasRegistered = isRegistered
+        registeredFolders.toggleDLNA(server: server, path: registrationPath)
+        if !wasRegistered { onRegistered() }
+    }
 }
 
 #Preview("DLNAサーバー") { DLNABrowser(registeredFolders: RegisteredFolders()) }
 
 private extension View {
     @ViewBuilder
-    func dlnaSettingsSectionStyle() -> some View {
+    func dlnaPhoneRowHeight(_ compact: Bool) -> some View {
         #if os(tvOS)
-        listRowBackground(Color.white)
+        self
+        #else
+        self.environment(\.defaultMinListRowHeight, compact ? 40 : 44)
+        #endif
+    }
+
+    @ViewBuilder
+    func dlnaCompactRowInsets(compact: Bool) -> some View {
+        #if os(tvOS)
+        self
+        #else
+        self.listRowInsets(EdgeInsets(top: compact ? 0 : 4, leading: 16, bottom: compact ? 0 : 4, trailing: 16))
+        #endif
+    }
+
+    func dlnaFolderButtonStyle() -> some View {
+        self.buttonStyle(.plain)
+    }
+
+    @ViewBuilder
+    func dlnaTVPlainButtonStyle() -> some View {
+        #if os(tvOS)
+        self.buttonStyle(.plain)
         #else
         self
         #endif
     }
 
     @ViewBuilder
+    func dlnaFocusedRowBackground(focused: Bool) -> some View {
+        #if os(tvOS)
+        self
+            .padding(.horizontal, 22)
+            .padding(.vertical, 10)
+            .background(focused ? TVFolderColors.selection : TVFolderColors.row,
+                        in: RoundedRectangle(cornerRadius: 14))
+        #else
+        self
+        #endif
+    }
+
+    @ViewBuilder
+    func dlnaFocusEffectStyle() -> some View {
+        #if os(tvOS)
+        self.focusEffectDisabled()
+        #else
+        self
+        #endif
+    }
+
+    @ViewBuilder
+    func dlnaDialogContainer() -> some View {
+        #if os(tvOS)
+        self
+            .frame(maxWidth: 1320, maxHeight: 900)
+            .background(Color(red: 0.07, green: 0.10, blue: 0.20))
+            .clipShape(RoundedRectangle(cornerRadius: 24))
+            .overlay {
+                RoundedRectangle(cornerRadius: 24)
+                    .strokeBorder(Color(red: 0.26, green: 0.32, blue: 0.44))
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Color.black.opacity(0.78))
+            .preferredColorScheme(.dark)
+        #else
+        self
+            .frame(maxWidth: 880, maxHeight: 800)
+            .background(Color(red: 0.07, green: 0.10, blue: 0.20))
+            .clipShape(RoundedRectangle(cornerRadius: 20))
+            .overlay { RoundedRectangle(cornerRadius: 20).strokeBorder(Color(red: 0.26, green: 0.32, blue: 0.44)) }
+            .padding(12)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Color.black.opacity(0.78))
+            .preferredColorScheme(.dark)
+        #endif
+    }
+
+    @ViewBuilder
+    func dlnaEntryRowStyle() -> some View {
+        #if os(tvOS)
+        self
+            .listRowBackground(Color(red: 0.10, green: 0.14, blue: 0.25))
+        #else
+        self
+            .listRowBackground(Color(red: 0.10, green: 0.14, blue: 0.25))
+            .listRowSeparator(.hidden)
+        #endif
+    }
+
+    @ViewBuilder
+    func dlnaFolderListStyle() -> some View {
+        #if os(tvOS)
+        self
+            .listStyle(.plain)
+            .background(Color(red: 0.07, green: 0.10, blue: 0.20))
+        #else
+        self
+            .listStyle(.plain)
+            .scrollContentBackground(.hidden)
+            .background(Color(red: 0.07, green: 0.10, blue: 0.20))
+        #endif
+    }
+
+    @ViewBuilder
+    func dlnaSettingsSectionStyle() -> some View {
+        #if os(tvOS)
+        self.listRowBackground(Color(red: 0.10, green: 0.14, blue: 0.25))
+        #else
+        self
+            .listRowBackground(Color(red: 0.10, green: 0.14, blue: 0.25))
+            .listRowSeparator(.hidden)
+        #endif
+    }
+
+    @ViewBuilder
     func dlnaToolbarButtonStyle() -> some View {
         #if os(tvOS)
-        buttonStyle(.borderedProminent).tint(.blue)
+        buttonStyle(.borderedProminent).tint(TVFolderColors.accent)
         #else
         self
         #endif
@@ -487,29 +901,25 @@ private extension View {
 
     @ViewBuilder
     func dlnaSupportingTextStyle() -> some View {
-        #if os(tvOS)
-        font(.footnote)
-            .foregroundStyle(Color(white: 0.35))
-        #else
-        self
-        #endif
+        self.font(.footnote).foregroundStyle(Color(white: 0.75))
     }
 
     @ViewBuilder
     func dlnaServerListStyle() -> some View {
         #if os(tvOS)
-        listStyle(.grouped)
-            .frame(maxWidth: 1320)
-            .frame(maxWidth: .infinity)
+        self.listStyle(.plain)
+            .background(Color(red: 0.07, green: 0.10, blue: 0.20))
         #else
-        self
+        self.listStyle(.plain)
+            .scrollContentBackground(.hidden)
+            .background(Color(red: 0.07, green: 0.10, blue: 0.20))
         #endif
     }
 
     @ViewBuilder
     func dlnaToolbarLabelStyle() -> some View {
         #if os(tvOS)
-        foregroundStyle(.black)
+        self.foregroundStyle(.black)
         #else
         self
         #endif
@@ -518,32 +928,34 @@ private extension View {
     @ViewBuilder
     func dlnaSectionHeadingStyle() -> some View {
         #if os(tvOS)
-        foregroundStyle(Color(white: 0.25))
+        self.foregroundStyle(TVFolderColors.accent)
         #else
-        self
+        self.foregroundStyle(.cyan)
         #endif
     }
 
     @ViewBuilder
     func dlnaBrowserBackground() -> some View {
-        #if os(tvOS)
-        background(Color(white: 0.94))
-        #else
-        self
-        #endif
+        self.background(Color(red: 0.07, green: 0.10, blue: 0.20))
     }
 
     @ViewBuilder
     func dlnaAddressFieldStyle(isFocused: Bool) -> some View {
         #if os(tvOS)
-        padding(12)
-            .background(.white, in: RoundedRectangle(cornerRadius: 14))
+        self.padding(12)
+            .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 14))
             .overlay {
                 RoundedRectangle(cornerRadius: 14)
-                    .strokeBorder(isFocused ? Color.blue : Color(white: 0.5), lineWidth: isFocused ? 4 : 2)
+                    .strokeBorder(isFocused ? TVFolderColors.focusBorder : Color.white.opacity(0.2),
+                                  lineWidth: isFocused ? 3 : 2)
             }
         #else
-        self
+        self.padding(10)
+            .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
+            .overlay {
+                RoundedRectangle(cornerRadius: 10)
+                    .strokeBorder(isFocused ? Color.cyan : Color.white.opacity(0.2), lineWidth: isFocused ? 2 : 1)
+            }
         #endif
     }
 
