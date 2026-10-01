@@ -11,14 +11,11 @@ private enum FolderAction {
 struct ContentView: View {
     @State private var library = MediaLibrary()
     @State private var registeredFolders = RegisteredFolders()
-    @AppStorage("useSystemFilePicker") private var useSystemFilePicker = false
-    @AppStorage("isDLNAEnabled") private var isDLNAEnabled = true
     private enum Presentation: Identifiable, Equatable {
-        case folder, file, browser, player, dlna(RegisteredDLNAFolder?)
+        case folder, browser, player, dlna(RegisteredDLNAFolder?)
         var id: String {
             switch self {
             case .folder: "folder"
-            case .file: "file"
             case .browser: "browser"
             case .player: "player"
             case .dlna: "dlna"
@@ -51,21 +48,6 @@ struct ContentView: View {
                 if library.isLoading { ProgressView("プレイリストを作成中…").padding().background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12)) }
             }
             .disabled(library.isLoading)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    NavigationLink {
-                        SettingsView(useSystemFilePicker: $useSystemFilePicker, isDLNAEnabled: $isDLNAEnabled)
-                    } label: {
-                        Label("設定", systemImage: "gearshape")
-                            .foregroundStyle(.white)
-                    }
-                    .tint(.white)
-                    .accessibilityIdentifier("home.settings")
-                }
-            }
-            .toolbarColorScheme(.dark, for: .navigationBar)
-            .toolbarBackground(Color(red: 0.06, green: 0.09, blue: 0.26), for: .navigationBar)
-            .toolbarBackground(.visible, for: .navigationBar)
             .navigationDestination(isPresented: $showingLibrary) {
                 PlaylistView(library: library, chooseFolder: beginAuthorization) { url in
                     library.playback.select(url, autoplay: false)
@@ -75,7 +57,7 @@ struct ContentView: View {
         }
         .tint(.cyan)
         .sheet(isPresented: $showingSavedFolders, onDismiss: handleFolderAction) {
-            SavedFoldersView(folders: registeredFolders, isDLNAEnabled: $isDLNAEnabled,
+            SavedFoldersView(folders: registeredFolders,
                              onRemoveLocal: removeRegisteredLocal) { action in
                 folderAction = action
                 showingSavedFolders = false
@@ -132,8 +114,6 @@ struct ContentView: View {
         switch destination {
         case .folder:
             systemMediaPicker(isFolder: true)
-        case .file:
-            systemMediaPicker(isFolder: false)
         case .browser:
             if let root = library.folderURL {
                 MediaFileBrowser(root: root, initialDirectory: library.currentDirectoryURL ?? root,
@@ -321,11 +301,7 @@ struct ContentView: View {
         }
         pickerHasDismissed = false
         pickedURL = nil
-        #if targetEnvironment(macCatalyst)
         presentation = .browser
-        #else
-        presentation = useSystemFilePicker ? .file : .browser
-        #endif
     }
 
     #if targetEnvironment(macCatalyst)
@@ -404,7 +380,6 @@ private struct HomeView: View {
 
 private struct SavedFoldersView: View {
     let folders: RegisteredFolders
-    @Binding var isDLNAEnabled: Bool
     let onRemoveLocal: (RegisteredLocalFolder) -> Void
     let select: (FolderAction) -> Void
     @Environment(\.dismiss) private var dismiss
@@ -446,7 +421,7 @@ private struct SavedFoldersView: View {
                         }
                     } header: { Text("端末のフォルダー").foregroundStyle(.cyan) }
                 }
-                if isDLNAEnabled && !folders.dlna.isEmpty {
+                if !folders.dlna.isEmpty {
                     Section {
                         ForEach(folders.dlna.sorted { $0.detail.localizedStandardCompare($1.detail) == .orderedAscending }) { folder in
                             Button { select(.dlna(folder)) } label: {
@@ -466,7 +441,7 @@ private struct SavedFoldersView: View {
                         }
                     } header: { Text("DLNAフォルダー").foregroundStyle(.cyan) }
                 }
-                if folders.local.isEmpty && (!isDLNAEnabled || folders.dlna.isEmpty) {
+                if folders.local.isEmpty && folders.dlna.isEmpty {
                     ContentUnavailableView("登録したフォルダーはありません", systemImage: "folder.badge.plus",
                                            description: Text("「フォルダーを追加」から登録してください。"))
                         .listRowBackground(Color.clear)
@@ -525,8 +500,7 @@ private struct SavedFoldersView: View {
         .savedFolderDialogStyle()
         .accessibilityHidden(choosingSource)
         if choosingSource {
-            AddFolderSourceDialog(isDLNAEnabled: isDLNAEnabled, choose: { action in
-                if case .addDLNA = action { isDLNAEnabled = true }
+            AddFolderSourceDialog(choose: { action in
                 choosingSource = false
                 select(action)
             }, close: { choosingSource = false })
@@ -585,7 +559,6 @@ private extension View {
 }
 
 private struct AddFolderSourceDialog: View {
-    let isDLNAEnabled: Bool
     let choose: (FolderAction) -> Void
     let close: () -> Void
 
@@ -607,7 +580,7 @@ private struct AddFolderSourceDialog: View {
                         choose(.addLocal)
                     }
                     sourceRow(title: "DLNAサーバー",
-                              detail: isDLNAEnabled ? "NASのフォルダーを開いて登録" : "DLNA機能をオンにしてNASを開く",
+                              detail: "NASのフォルダーを開いて登録",
                               icon: "network", identifier: "saved.source.dlna") {
                         choose(.addDLNA)
                     }
@@ -653,36 +626,6 @@ private struct AddFolderSourceDialog: View {
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier(identifier)
-    }
-}
-
-private struct SettingsView: View {
-    @Binding var useSystemFilePicker: Bool
-    @Binding var isDLNAEnabled: Bool
-
-    var body: some View {
-        Form {
-            Section {
-                Toggle("DLNA機能を使う", isOn: $isDLNAEnabled)
-                    .accessibilityIdentifier("settings.isDLNAEnabled")
-            } header: {
-                Text("DLNA")
-            } footer: {
-                Text("オフの間は保存済みDLNAフォルダーを隠します。「フォルダーを追加」でDLNAサーバーを選ぶと再びオンになります。")
-            }
-            #if !targetEnvironment(macCatalyst)
-            Section {
-                Toggle("標準ファイルダイアログを使う", isOn: $useSystemFilePicker)
-                    .accessibilityIdentifier("settings.useSystemFilePicker")
-            } header: {
-                Text("USBストレージのファイル選択")
-            } footer: {
-                Text("オフ：検索窓のないアプリ内一覧を使います。\nオン：標準ファイルダイアログを使います。")
-            }
-            #endif
-        }
-        .navigationTitle("設定")
-        .navigationBarTitleDisplayMode(.inline)
     }
 }
 

@@ -36,8 +36,9 @@ final class DeviceUITests: XCTestCase {
     }
 
     func testHomeSelectionOpensSavedFolders() {
-        app.launchArguments = ["-isDLNAEnabled", "YES"]
+        app.launchArguments = []
         app.launch()
+        XCTAssertFalse(app.buttons["home.settings"].exists)
         XCTAssertFalse(app.buttons["home.authorizeFolder"].exists)
         XCTAssertFalse(app.buttons["home.selectDLNA"].exists)
         XCTAssertFalse(app.staticTexts["home.authorizationStatus"].exists)
@@ -51,15 +52,17 @@ final class DeviceUITests: XCTestCase {
         XCTAssertTrue(app.buttons["saved.addFolder"].exists)
     }
 
-    func testDLNASourceIsVisibleWhenFeatureIsOff() {
-        app.launchArguments = ["-isDLNAEnabled", "NO"]
+    func testFolderSourcesIgnoreRemovedSettings() {
+        app.launchArguments = ["-isDLNAEnabled", "NO", "-useSystemFilePicker", "YES"]
         app.launch()
+        XCTAssertFalse(app.buttons["home.settings"].exists)
         app.buttons["home.select"].tap()
         app.buttons["saved.addFolder"].tap()
         let dlna = app.buttons["saved.source.dlna"]
         XCTAssertTrue(dlna.waitForExistence(timeout: 5))
         XCTAssertTrue(dlna.isHittable)
-        XCTAssertTrue(dlna.label.contains("DLNA機能をオンにしてNASを開く"))
+        XCTAssertTrue(app.buttons["saved.source.local"].exists)
+        XCTAssertTrue(dlna.label.contains("NASのフォルダーを開いて登録"))
         dlna.tap()
         XCTAssertTrue(app.navigationBars["DLNAサーバー"].waitForExistence(timeout: 10))
     }

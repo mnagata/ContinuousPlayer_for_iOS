@@ -21,7 +21,7 @@ final class DLNAUITests: XCTestCase {
         #endif
         continueAfterFailure = false
         let app = XCUIApplication()
-        app.launchArguments = ["--ui-dlna-direct-only", "-isDLNAEnabled", "YES"]
+        app.launchArguments = ["--ui-dlna-direct-only"]
         app.launch()
         defer { app.terminate() }
 
@@ -90,7 +90,7 @@ final class DLNAUITests: XCTestCase {
         #endif
         continueAfterFailure = false
         let app = XCUIApplication()
-        app.launchArguments = ["--ui-dlna-direct-only", "-isDLNAEnabled", "YES"]
+        app.launchArguments = ["--ui-dlna-direct-only"]
         app.launch()
         defer { app.terminate() }
         openAddDLNA(app)
