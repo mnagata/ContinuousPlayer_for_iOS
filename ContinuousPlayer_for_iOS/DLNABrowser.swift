@@ -68,7 +68,7 @@ struct DLNABrowser: View {
             }
             .toolbar { cancelToolbar }
         }
-        .dlnaDialogContainer()
+        .fileBrowserDialogContainer()
         .task(id: initialFolder?.id) { await openInitialFolder() }
         .fullScreenCover(item: $selection, onDismiss: {
             showingPlayerFileBrowser = false
@@ -160,7 +160,7 @@ struct DLNABrowser: View {
                         folderView(folder)
                     }
             }
-            .dlnaDialogContainer()
+            .fileBrowserDialogContainer()
         }
 
         private func folderView(_ folder: Folder) -> some View {
@@ -205,8 +205,8 @@ struct DLNABrowser: View {
         .padding(24)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .navigationTitle("保存済みDLNAフォルダー")
-        .dlnaNavigationTitleStyle()
-        .dlnaBrowserBackground()
+        .fileBrowserNavigationTitleStyle()
+        .fileBrowserBackground()
     }
 
     private func openInitialFolder() async {
@@ -443,8 +443,8 @@ private struct DLNAServersView<Destination: Hashable>: View {
         }
         .dlnaServerListStyle()
         .navigationTitle("DLNAサーバー")
-        .dlnaNavigationTitleStyle()
-        .dlnaBrowserBackground()
+        .fileBrowserNavigationTitleStyle()
+        .fileBrowserBackground()
         .task {
             guard connection == nil, !savedAddress.isEmpty else { return }
             address = savedAddress
@@ -578,7 +578,7 @@ private struct DLNAFolderView: View {
                     Text(error).foregroundStyle(.orange)
                 } else {
                     if !folders.isEmpty {
-                        Section("フォルダー") {
+                        Section {
                             ForEach(folders) { entry in
                                 Button { openFolder(entry) } label: {
                                     HStack(spacing: 16) {
@@ -597,8 +597,8 @@ private struct DLNAFolderView: View {
                                     .contentShape(Rectangle())
                                 }
                                 .dlnaFolderButtonStyle()
-                                .dlnaEntryRowStyle()
-                                .dlnaCompactRowInsets(compact: isCompactPhoneLandscape)
+                                .fileBrowserEntryRowStyle()
+                                .fileBrowserRowInsets(compact: isCompactPhoneLandscape)
                                 .id(entry.id)
                                 .focused($focusedEntryID, equals: entry.id)
                                 .dlnaFocusEffectStyle()
@@ -627,23 +627,22 @@ private struct DLNAFolderView: View {
                                     .contentShape(Rectangle())
                                 }
                                 .dlnaFolderButtonStyle()
-                                .dlnaEntryRowStyle()
-                                .dlnaCompactRowInsets(compact: isCompactPhoneLandscape)
+                                .fileBrowserEntryRowStyle()
+                                .fileBrowserRowInsets(compact: isCompactPhoneLandscape)
                                 .id(entry.id)
                                 .focused($focusedEntryID, equals: entry.id)
                                 .dlnaFocusEffectStyle()
                                 .accessibilityLabel("\(entry.title)から連続再生")
                             }
-                        } header: { Text("\(playable.count)件 · OP / ED順") }
-                        footer: { Text("選んだファイルから、このフォルダーのMP4／M4Vを最後まで再生します。") }
+                        } footer: { Text("選んだファイルから、このフォルダーのMP4／M4Vを最後まで再生します。") }
                     } else {
                         Text("この階層には再生対象のMP4／M4Vがありません。")
                             .foregroundStyle(.secondary)
                     }
                 }
             }
-            .dlnaFolderListStyle()
-            .dlnaPhoneRowHeight(isCompactPhoneLandscape)
+            .fileBrowserListStyle()
+            .fileBrowserRowHeight(isCompactPhoneLandscape)
             #if !os(tvOS)
             .onGeometryChange(for: Bool.self) { geometry in
                 UIDevice.current.userInterfaceIdiom == .phone && geometry.size.width > geometry.size.height
@@ -663,8 +662,8 @@ private struct DLNAFolderView: View {
                 focusedEntryID = id
             }
         }
-        .navigationTitle(title).dlnaNavigationTitleStyle()
-        .dlnaBrowserBackground()
+        .navigationTitle(title).fileBrowserNavigationTitleStyle()
+        .fileBrowserBackground()
         .toolbar {
             #if os(tvOS)
             ToolbarItem(placement: .primaryAction) {
@@ -773,23 +772,8 @@ private struct DLNAFolderView: View {
 #Preview("DLNAサーバー") { DLNABrowser(registeredFolders: RegisteredFolders()) }
 
 private extension View {
-    @ViewBuilder
-    func dlnaPhoneRowHeight(_ compact: Bool) -> some View {
-        #if os(tvOS)
-        self
-        #else
-        self.environment(\.defaultMinListRowHeight, compact ? 40 : 44)
-        #endif
-    }
 
-    @ViewBuilder
-    func dlnaCompactRowInsets(compact: Bool) -> some View {
-        #if os(tvOS)
-        self
-        #else
-        self.listRowInsets(EdgeInsets(top: compact ? 0 : 4, leading: 16, bottom: compact ? 0 : 4, trailing: 16))
-        #endif
-    }
+
 
     func dlnaFolderButtonStyle() -> some View {
         self.buttonStyle(.plain)
@@ -826,58 +810,9 @@ private extension View {
         #endif
     }
 
-    @ViewBuilder
-    func dlnaDialogContainer() -> some View {
-        #if os(tvOS)
-        self
-            .frame(maxWidth: 1320, maxHeight: 900)
-            .background(Color(red: 0.07, green: 0.10, blue: 0.20))
-            .clipShape(RoundedRectangle(cornerRadius: 24))
-            .overlay {
-                RoundedRectangle(cornerRadius: 24)
-                    .strokeBorder(Color(red: 0.26, green: 0.32, blue: 0.44))
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Color.black.opacity(0.78))
-            .preferredColorScheme(.dark)
-        #else
-        self
-            .frame(maxWidth: 880, maxHeight: 800)
-            .background(Color(red: 0.07, green: 0.10, blue: 0.20))
-            .clipShape(RoundedRectangle(cornerRadius: 20))
-            .overlay { RoundedRectangle(cornerRadius: 20).strokeBorder(Color(red: 0.26, green: 0.32, blue: 0.44)) }
-            .padding(12)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Color.black.opacity(0.78))
-            .preferredColorScheme(.dark)
-        #endif
-    }
 
-    @ViewBuilder
-    func dlnaEntryRowStyle() -> some View {
-        #if os(tvOS)
-        self
-            .listRowBackground(Color(red: 0.10, green: 0.14, blue: 0.25))
-        #else
-        self
-            .listRowBackground(Color(red: 0.10, green: 0.14, blue: 0.25))
-            .listRowSeparator(.hidden)
-        #endif
-    }
 
-    @ViewBuilder
-    func dlnaFolderListStyle() -> some View {
-        #if os(tvOS)
-        self
-            .listStyle(.plain)
-            .background(Color(red: 0.07, green: 0.10, blue: 0.20))
-        #else
-        self
-            .listStyle(.plain)
-            .scrollContentBackground(.hidden)
-            .background(Color(red: 0.07, green: 0.10, blue: 0.20))
-        #endif
-    }
+
 
     @ViewBuilder
     func dlnaSettingsSectionStyle() -> some View {
@@ -934,10 +869,6 @@ private extension View {
         #endif
     }
 
-    @ViewBuilder
-    func dlnaBrowserBackground() -> some View {
-        self.background(Color(red: 0.07, green: 0.10, blue: 0.20))
-    }
 
     @ViewBuilder
     func dlnaAddressFieldStyle(isFocused: Bool) -> some View {
@@ -959,12 +890,4 @@ private extension View {
         #endif
     }
 
-    @ViewBuilder
-    func dlnaNavigationTitleStyle() -> some View {
-        #if os(tvOS)
-        self
-        #else
-        navigationBarTitleDisplayMode(.inline)
-        #endif
-    }
 }

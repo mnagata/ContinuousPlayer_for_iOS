@@ -663,8 +663,7 @@ private struct PlaylistView: View {
                         }
                         .accessibilityLabel("\(index + 1)、\(url.lastPathComponent)から再生")
                     }
-                } header: { Text("\(library.files.count)件 · OP / ED順") }
-                footer: { Text("選んだファイルから順に、最後まで連続再生します。") }
+                } footer: { Text("選んだファイルから順に、最後まで連続再生します。") }
             }
         }
         .navigationTitle("OP / EDを選ぶ")

@@ -8,179 +8,175 @@ struct MediaFileBrowser: View {
     let initialFile: URL?
     let select: (URL) -> Void
     let cancel: () -> Void
+    @State private var path: [URL]
+    @State private var lastSelections: [URL: String] = [:]
+
+    init(root: URL, initialDirectory: URL, initialFile: URL?,
+         select: @escaping (URL) -> Void, cancel: @escaping () -> Void) {
+        self.root = root
+        self.initialDirectory = initialDirectory
+        self.initialFile = initialFile
+        self.select = select
+        self.cancel = cancel
+        _path = State(initialValue: Self.folderPath(from: root, to: initialDirectory))
+    }
+
+    var body: some View {
+        NavigationStack(path: $path) {
+            folderView(root)
+                .navigationDestination(for: URL.self) { directory in
+                    folderView(directory)
+                }
+        }
+        .fileBrowserDialogContainer()
+    }
+
+    private func folderView(_ directory: URL) -> some View {
+        MediaFolderView(root: root, directory: directory,
+                        lastSelectionPath: Binding(
+                            get: { lastSelections[directory] ?? initialFile?.standardizedFileURL.path },
+                            set: { lastSelections[directory] = $0 }
+                        ), openFolder: { url in
+            lastSelections[directory] = url.standardizedFileURL.path
+            path.append(url)
+        }, select: { url in
+            lastSelections[directory] = url.standardizedFileURL.path
+            select(url)
+        }, cancel: cancel)
+    }
+
+    private static func folderPath(from root: URL, to directory: URL) -> [URL] {
+        let rootComponents = root.standardizedFileURL.resolvingSymlinksInPath().pathComponents
+        let directoryComponents = directory.standardizedFileURL.resolvingSymlinksInPath().pathComponents
+        guard directoryComponents.starts(with: rootComponents) else { return [] }
+        var current = root
+        return directoryComponents.dropFirst(rootComponents.count).map { component in
+            current = current.appendingPathComponent(component, isDirectory: true)
+            return current
+        }
+    }
+}
+
+private struct MediaFolderView: View {
+    let root: URL
+    let directory: URL
+    @Binding var lastSelectionPath: String?
+    let openFolder: (URL) -> Void
+    let select: (URL) -> Void
+    let cancel: () -> Void
     @State private var isCompactPhoneLandscape = false
-    @State private var directory: URL?
     @State private var folders: [URL] = []
     @State private var files: [URL] = []
     @State private var isLoading = true
+    @State private var hasLoaded = false
     @State private var error: String?
-    @State private var returnFolderPath: String?
-
-    private var current: URL { directory ?? initialDirectory }
-    private var isRoot: Bool { current.standardizedFileURL.resolvingSymlinksInPath().path == root.standardizedFileURL.resolvingSymlinksInPath().path }
 
     var body: some View {
-        NavigationStack {
-            Group {
+        ScrollViewReader { proxy in
+            List {
                 if isLoading {
                     ProgressView("ファイルを読み込み中…")
                 } else if let error {
-                    ContentUnavailableView {
-                        Label("フォルダーを開けません", systemImage: "folder.badge.questionmark")
-                    } description: {
-                        Text(error)
-                    } actions: {
-                        Button("再読み込み") { Task { await load() } }
-                    }
-                } else if folders.isEmpty && files.isEmpty {
-                    ContentUnavailableView("対象ファイルがありません", systemImage: "music.note.list",
-                                           description: Text("動画・音声ファイルのあるフォルダーを選んでください。"))
+                    Text(error).foregroundStyle(.orange)
                 } else {
-                    ScrollViewReader { proxy in
-                        List {
-                            if !folders.isEmpty {
-                                Section("フォルダー") {
-                                    ForEach(folders, id: \.self) { url in
-                                        Button {
-                                            returnFolderPath = nil
-                                            directory = url
-                                        } label: {
-                                            HStack(spacing: 16) {
-                                                Image(systemName: "folder.fill")
-                                                    .foregroundStyle(.cyan).frame(width: 28)
-                                                Text(url.lastPathComponent)
-                                                    .foregroundStyle(.primary)
-                                                    .lineLimit(3)
-                                                    .fixedSize(horizontal: false, vertical: true)
-                                                Spacer(minLength: 0)
-                                                Image(systemName: "chevron.right").foregroundStyle(.cyan)
-                                            }
-                                            .frame(maxWidth: .infinity, minHeight: isCompactPhoneLandscape ? 40 : 44)
-                                            .contentShape(Rectangle())
-                                        }
-                                        .buttonStyle(.plain)
-                                        .mediaBrowserRowStyle(compact: isCompactPhoneLandscape)
-                                        .id(url.standardizedFileURL.path)
-                                    }
+                    if !folders.isEmpty {
+                        Section {
+                            ForEach(folders, id: \.self) { url in
+                                Button {
+                                    openFolder(url)
+                                } label: {
+                                    fileRow(url, isFolder: true)
                                 }
-                            }
-                            if !files.isEmpty {
-                                Section {
-                                    ForEach(files, id: \.self) { url in
-                                        Button { select(url) } label: {
-                                            HStack(spacing: 16) {
-                                                Image(systemName: "play.circle")
-                                                    .foregroundStyle(.cyan).frame(width: 28)
-                                                Text(url.lastPathComponent)
-                                                    .foregroundStyle(.primary)
-                                                    .lineLimit(3)
-                                                    .fixedSize(horizontal: false, vertical: true)
-                                                Spacer(minLength: 0)
-                                            }
-                                            .frame(maxWidth: .infinity, minHeight: isCompactPhoneLandscape ? 40 : 44)
-                                            .contentShape(Rectangle())
-                                        }
-                                        .buttonStyle(.plain)
-                                        .mediaBrowserRowStyle(compact: isCompactPhoneLandscape)
-                                        .id(url.standardizedFileURL.path)
-                                        .accessibilityLabel("\(url.lastPathComponent)を選択")
-                                    }
-                                } header: {
-                                    Text("\(files.count)件 · OP / ED順").foregroundStyle(.cyan)
-                                } footer: {
-                                    Text("選んだファイルから、このフォルダーの対象ファイルを最後まで再生します。")
-                                }
-                            }
-                        }
-                        .listStyle(.plain)
-                        .environment(\.defaultMinListRowHeight, isCompactPhoneLandscape ? 40 : 44)
-                        .onGeometryChange(for: Bool.self) { geometry in
-                            UIDevice.current.userInterfaceIdiom == .phone && geometry.size.width > geometry.size.height
-                        } action: { _, isLandscape in
-                            isCompactPhoneLandscape = isLandscape
-                        }
-                        .scrollContentBackground(.hidden)
-                        .background(MediaBrowserColors.background)
-                        .accessibilityIdentifier("picker.customList")
-                        .onAppear {
-                            // Restore the departed folder first, or the playback file on initial opening.
-                            // Paths avoid mismatches from directory URLs with trailing slashes.
-                            if let path = returnFolderPath,
-                               folders.contains(where: { $0.standardizedFileURL.path == path }) {
-                                proxy.scrollTo(path, anchor: .center)
-                            } else if directory == nil, let path = initialFile?.standardizedFileURL.path,
-                                      files.contains(where: { $0.standardizedFileURL.path == path }) {
-                                proxy.scrollTo(path, anchor: .center)
+                                .buttonStyle(.plain)
+                                .fileBrowserEntryRowStyle()
+                                .fileBrowserRowInsets(compact: isCompactPhoneLandscape)
+                                .id(url.standardizedFileURL.path)
                             }
                         }
                     }
-                    .id(current)
-                }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(MediaBrowserColors.background)
-            .navigationTitle(current.lastPathComponent)
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button("キャンセル", role: .cancel, action: cancel)
-                        .accessibilityIdentifier("picker.cancel")
-                }
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        returnFolderPath = current.standardizedFileURL.path
-                        directory = current.deletingLastPathComponent()
-                    } label: {
-                        Label("上のフォルダー", systemImage: "arrow.up")
+                    if !files.isEmpty {
+                        Section {
+                            ForEach(files, id: \.self) { url in
+                                Button { select(url) } label: {
+                                    fileRow(url, isFolder: false)
+                                }
+                                .buttonStyle(.plain)
+                                .fileBrowserEntryRowStyle()
+                                .fileBrowserRowInsets(compact: isCompactPhoneLandscape)
+                                .id(url.standardizedFileURL.path)
+                                .accessibilityLabel("\(url.lastPathComponent)を選択")
+                            }
+                        } footer: {
+                            Text("選んだファイルから、このフォルダーの対象ファイルを最後まで再生します。")
+                        }
+                    } else {
+                        Text("この階層には再生対象の動画・音声ファイルがありません。")
+                            .foregroundStyle(.secondary)
                     }
-                    .disabled(isRoot || isLoading)
-                    .accessibilityIdentifier("picker.parentFolder")
                 }
             }
-            .task(id: current) { await load() }
+            .fileBrowserListStyle()
+            .fileBrowserRowHeight(isCompactPhoneLandscape)
+            .onGeometryChange(for: Bool.self) { geometry in
+                UIDevice.current.userInterfaceIdiom == .phone && geometry.size.width > geometry.size.height
+            } action: { _, isLandscape in
+                isCompactPhoneLandscape = isLandscape
+            }
+            .accessibilityIdentifier("picker.customList")
+            .task(id: isLoading) {
+                guard !isLoading, error == nil else { return }
+                guard let path = lastSelectionPath,
+                      (folders + files).contains(where: { $0.standardizedFileURL.path == path }) else { return }
+                await Task.yield()
+                guard !Task.isCancelled else { return }
+                proxy.scrollTo(path, anchor: .center)
+            }
         }
-        .mediaBrowserDialogStyle()
+        .navigationTitle(directory.lastPathComponent)
+        .fileBrowserNavigationTitleStyle()
+        .fileBrowserBackground()
+        .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                Button("キャンセル", role: .cancel, action: cancel)
+                    .accessibilityIdentifier("picker.cancel")
+            }
+        }
+        .task {
+            guard !hasLoaded else { return }
+            await load()
+        }
+    }
+
+    private func fileRow(_ url: URL, isFolder: Bool) -> some View {
+        HStack(spacing: 16) {
+            Image(systemName: isFolder ? "folder.fill" : "play.circle")
+                .foregroundStyle(.cyan).frame(width: 28)
+            Text(url.lastPathComponent)
+                .foregroundStyle(.primary)
+                .lineLimit(3)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+            if isFolder {
+                Image(systemName: "chevron.right").foregroundStyle(.cyan)
+            }
+        }
+        .frame(maxWidth: .infinity, minHeight: isCompactPhoneLandscape ? 40 : 44)
+        .contentShape(Rectangle())
     }
 
     private func load() async {
-        let requested = current
         isLoading = true
         error = nil
         do {
-            let entries = try await MediaScanner.browse(requested, within: root)
-            guard !Task.isCancelled, requested == current else { return }
+            let entries = try await MediaScanner.browse(directory, within: root)
+            guard !Task.isCancelled else { return }
             folders = entries.folders
             files = entries.files
+            hasLoaded = true
         } catch {
-            guard !Task.isCancelled, requested == current else { return }
+            guard !Task.isCancelled else { return }
             self.error = "USBストレージの接続を確認してください。\(error.localizedDescription)"
         }
         isLoading = false
-    }
-}
-
-private enum MediaBrowserColors {
-    static let background = Color(red: 0.07, green: 0.10, blue: 0.20)
-    static let row = Color(red: 0.10, green: 0.14, blue: 0.25)
-}
-
-private extension View {
-    func mediaBrowserRowStyle(compact: Bool) -> some View {
-        self
-            .listRowBackground(MediaBrowserColors.row)
-            .listRowSeparator(.hidden)
-            .listRowInsets(EdgeInsets(top: compact ? 0 : 4, leading: 16, bottom: compact ? 0 : 4, trailing: 16))
-    }
-
-    func mediaBrowserDialogStyle() -> some View {
-        self
-            .frame(maxWidth: 880, maxHeight: 800)
-            .background(MediaBrowserColors.background)
-            .clipShape(RoundedRectangle(cornerRadius: 20))
-            .overlay { RoundedRectangle(cornerRadius: 20).strokeBorder(Color(red: 0.26, green: 0.32, blue: 0.44)) }
-            .padding(12)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Color.black.opacity(0.78))
-            .preferredColorScheme(.dark)
-            .tint(.cyan)
     }
 }
