@@ -503,7 +503,7 @@ private struct SavedFoldersView: View {
             AddFolderSourceDialog(choose: { action in
                 choosingSource = false
                 select(action)
-            }, close: { choosingSource = false })
+            }, cancel: { choosingSource = false })
         }
         }
         .presentationBackground(Color.black.opacity(0.78))
@@ -560,7 +560,7 @@ private extension View {
 
 private struct AddFolderSourceDialog: View {
     let choose: (FolderAction) -> Void
-    let close: () -> Void
+    let cancel: () -> Void
 
     var body: some View {
         ZStack {
@@ -585,7 +585,7 @@ private struct AddFolderSourceDialog: View {
                         choose(.addDLNA)
                     }
                 }
-                Button("閉じる", action: close)
+                Button("キャンセル", role: .cancel, action: cancel)
                     .font(.headline).foregroundStyle(.white)
                     .frame(maxWidth: .infinity, minHeight: 44)
                     .background(Color.white.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))

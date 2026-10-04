@@ -718,19 +718,20 @@ private struct DLNAFolderView: View {
                     Rectangle().fill(Color(red: 0.26, green: 0.32, blue: 0.44)).frame(height: 1)
                 }
                 #else
-                HStack(spacing: 12) {
-                    Button(action: toggleRegistration) {
-                        Label(isRegistered ? "登録解除" : "このフォルダーを登録",
-                              systemImage: isRegistered ? "bookmark.slash" : "bookmark")
-                            .frame(maxWidth: .infinity, minHeight: 48)
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 12) {
+                        registerFolderButton
+                        reloadFolderButton
                     }
-                    .accessibilityIdentifier("dlna.registerFolder")
-                    Button("再読み込み", systemImage: "arrow.clockwise") { refreshID = UUID() }
-                        .frame(minHeight: 48)
-                        .disabled(isLoading)
+                    .fixedSize(horizontal: true, vertical: false)
+                    VStack(alignment: .trailing, spacing: 10) {
+                        registerFolderButton
+                        reloadFolderButton
+                    }
                 }
                 .buttonStyle(.bordered)
                 .tint(.cyan)
+                .frame(maxWidth: .infinity, alignment: .trailing)
                 .padding(.horizontal, 16)
                 .padding(.vertical, 10)
                 .background(Color(red: 0.07, green: 0.10, blue: 0.20))
@@ -755,6 +756,27 @@ private struct DLNAFolderView: View {
             }
         }
     }
+
+    #if !os(tvOS)
+    private var registerFolderButton: some View {
+        Button(action: toggleRegistration) {
+            Label(isRegistered ? "登録解除" : "このフォルダーを登録",
+                  systemImage: isRegistered ? "bookmark.slash" : "bookmark")
+                .padding(.horizontal, 8)
+                .frame(minHeight: 44)
+        }
+        .accessibilityIdentifier("dlna.registerFolder")
+    }
+
+    private var reloadFolderButton: some View {
+        Button { refreshID = UUID() } label: {
+            Label("再読み込み", systemImage: "arrow.clockwise")
+                .padding(.horizontal, 8)
+                .frame(minHeight: 44)
+        }
+        .disabled(isLoading)
+    }
+    #endif
 
     private var isRegistered: Bool {
         registeredFolders.contains(server, objectID: objectID)
