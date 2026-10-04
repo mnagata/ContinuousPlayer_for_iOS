@@ -35,6 +35,11 @@ struct DLNABrowser: View {
 
         var objectID: String { path.last?.id ?? "0" }
         var title: String { path.last?.title ?? server.name }
+        var hierarchy: [Folder] {
+            path.indices.map { index in
+                Folder(server: server, path: Array(path[...index]))
+            }
+        }
     }
 
     var body: some View {
@@ -136,9 +141,7 @@ struct DLNABrowser: View {
         playingFolderName = "\(folder.server.name) / \(folder.title)"
         if presentPlayer { selection = Selection() }
         else {
-            folderPath = folder.path.indices.map { index in
-                Folder(server: folder.server, path: Array(folder.path[...index]))
-            }
+            folderPath = folder.hierarchy
             showingPlayerFileBrowser = false
         }
     }
@@ -146,16 +149,29 @@ struct DLNABrowser: View {
     #if !os(tvOS)
     private struct PlaybackFileBrowser: View {
         let client: DLNAClient
-        let initialFolder: Folder
+        let rootFolder: Folder
         let registeredFolders: RegisteredFolders
         @Binding var lastSelections: [Folder: String]
         let cancel: () -> Void
         let select: ([DLNAEntry], DLNAEntry, Folder) -> Void
-        @State private var path: [Folder] = []
+        @State private var path: [Folder]
+
+        init(client: DLNAClient, initialFolder: Folder, registeredFolders: RegisteredFolders,
+             lastSelections: Binding<[Folder: String]>, cancel: @escaping () -> Void,
+             select: @escaping ([DLNAEntry], DLNAEntry, Folder) -> Void) {
+            self.client = client
+            self.registeredFolders = registeredFolders
+            self._lastSelections = lastSelections
+            self.cancel = cancel
+            self.select = select
+            let hierarchy = initialFolder.hierarchy
+            rootFolder = hierarchy.first ?? initialFolder
+            _path = State(initialValue: Array(hierarchy.dropFirst()))
+        }
 
         var body: some View {
             NavigationStack(path: $path) {
-                folderView(initialFolder)
+                folderView(rootFolder)
                     .navigationDestination(for: Folder.self) { folder in
                         folderView(folder)
                     }
@@ -220,9 +236,7 @@ struct DLNABrowser: View {
             guard !initialFolder.path.isEmpty else {
                 throw DLNAError.message("保存されたフォルダーの階層情報がありません。")
             }
-            folderPath = initialFolder.path.indices.map { index in
-                Folder(server: server, path: Array(initialFolder.path[...index]))
-            }
+            folderPath = Folder(server: server, path: initialFolder.path).hierarchy
         } catch {
             reconnectError = "\(initialFolder.serverName)への接続を確認してください。\(error.localizedDescription)"
         }

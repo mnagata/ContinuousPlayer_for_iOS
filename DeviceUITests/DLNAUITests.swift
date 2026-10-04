@@ -71,7 +71,28 @@ final class DLNAUITests: XCTestCase {
         XCTAssertTrue(app.navigationBars["Child 00"].waitForExistence(timeout: 15))
         XCTAssertFalse(app.navigationBars["DLNAサーバー"].exists)
         XCTAssertFalse(app.buttons["dlna.registerFolder"].exists)
-        XCTAssertTrue(app.buttons["作品 OP.mp4から連続再生"].waitForExistence(timeout: 15))
+        let file = app.buttons["作品 OP.mp4から連続再生"]
+        XCTAssertTrue(file.waitForExistence(timeout: 15))
+
+        file.tap()
+        XCTAssertTrue(app.staticTexts["最後まで再生しました"].waitForExistence(timeout: 20))
+        app.buttons["OP / EDを選び直す"].tap()
+        XCTAssertTrue(file.waitForExistence(timeout: 10), "Open the currently playing folder")
+        let parent = app.navigationBars["Child 00"].buttons["Folder 00"]
+        XCTAssertTrue(parent.waitForExistence(timeout: 5), "The overlay must include the parent folder")
+        parent.tap()
+        XCTAssertTrue(child.waitForExistence(timeout: 10))
+        let root = app.navigationBars["Folder 00"].buttons["Fixture NAS"]
+        XCTAssertTrue(root.waitForExistence(timeout: 5), "Retain all ancestors up to the server root")
+        root.tap()
+        XCTAssertTrue(folder.waitForExistence(timeout: 10))
+        folder.tap()
+        XCTAssertTrue(child.waitForExistence(timeout: 10))
+        child.tap()
+        XCTAssertTrue(file.waitForExistence(timeout: 10))
+        app.buttons["dlna.cancel"].tap()
+        XCTAssertTrue(app.buttons["ホームに戻る"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["作品 ED.mp4"].firstMatch.exists, "Cancel keeps the paused video")
 
         app.terminate()
         app.launch()
