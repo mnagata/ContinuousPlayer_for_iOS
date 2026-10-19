@@ -104,7 +104,7 @@ private struct MediaFolderView: View {
                                 .fileBrowserEntryRowStyle(isCurrent: lastSelectionPath == url.standardizedFileURL.path)
                                 .fileBrowserRowInsets(compact: isCompactPhoneLandscape)
                                 .id(url.standardizedFileURL.path)
-                                .accessibilityLabel("\(url.lastPathComponent)を選択")
+                                .accessibilityLabel("\(url.deletingPathExtension().lastPathComponent)を選択")
                             }
                         } footer: {
                             Text("選んだファイルから、このフォルダーの対象ファイルを最後まで再生します。")
@@ -152,7 +152,7 @@ private struct MediaFolderView: View {
         HStack(spacing: 16) {
             Image(systemName: isFolder ? "folder.fill" : "play.circle")
                 .foregroundStyle(.cyan).frame(width: 28)
-            Text(url.lastPathComponent)
+            Text(isFolder ? url.lastPathComponent : url.deletingPathExtension().lastPathComponent)
                 .foregroundStyle(.primary)
                 .lineLimit(3)
                 .fixedSize(horizontal: false, vertical: true)
