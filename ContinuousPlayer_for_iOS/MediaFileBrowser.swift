@@ -29,6 +29,10 @@ struct MediaFileBrowser: View {
                 }
         }
         .fileBrowserDialogContainer()
+        .fileBrowserBackShortcut(enabled: !path.isEmpty) {
+            guard !path.isEmpty else { return }
+            path.removeLast()
+        }
     }
 
     private func folderView(_ directory: URL) -> some View {

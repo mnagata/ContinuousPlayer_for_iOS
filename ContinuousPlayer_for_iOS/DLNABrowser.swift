@@ -75,6 +75,10 @@ struct DLNABrowser: View {
             .toolbar { cancelToolbar }
         }
         .fileBrowserDialogContainer()
+        .fileBrowserBackShortcut(enabled: selection == nil && !folderPath.isEmpty) {
+            guard selection == nil, !folderPath.isEmpty else { return }
+            folderPath.removeLast()
+        }
         .task(id: initialFolder?.id) { await openInitialFolder() }
         .fullScreenCover(item: $selection, onDismiss: {
             showingPlayerFileBrowser = false
@@ -187,6 +191,10 @@ struct DLNABrowser: View {
                     }
             }
             .fileBrowserDialogContainer()
+            .fileBrowserBackShortcut(enabled: !path.isEmpty) {
+                guard !path.isEmpty else { return }
+                path.removeLast()
+            }
         }
 
         private func folderView(_ folder: Folder) -> some View {
