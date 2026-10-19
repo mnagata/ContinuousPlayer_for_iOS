@@ -15,7 +15,14 @@ struct ContinuousPlayer_for_iOSApp: App {
                 ValidationView()
             } else {
                 ContentView()
+                    #if targetEnvironment(macCatalyst)
+                    .frame(minWidth: 640, maxWidth: .infinity, minHeight: 360, maxHeight: .infinity)
+                    #endif
             }
         }
+        #if targetEnvironment(macCatalyst)
+        .defaultSize(width: 1280, height: 720)
+        .windowResizability(.contentSize)
+        #endif
     }
 }
