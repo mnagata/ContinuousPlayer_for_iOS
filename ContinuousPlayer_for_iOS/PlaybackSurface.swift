@@ -15,6 +15,7 @@ struct PlaybackSurface: UIViewControllerRepresentable {
     var onShowInfo: (() -> Void)? = nil
     var onVolumeUp: (() -> Void)? = nil
     var onVolumeDown: (() -> Void)? = nil
+    var onBrowseFiles: (() -> Void)? = nil
 
     final class SurfaceView: UIView {
         override class var layerClass: AnyClass { AVPlayerLayer.self }
@@ -31,6 +32,7 @@ struct PlaybackSurface: UIViewControllerRepresentable {
         var onVolumeDown: (() -> Void)?
         var onShowInfo: (() -> Void)?
         var onTogglePlayback: (() -> Void)?
+        var onBrowseFiles: (() -> Void)?
         var keyboardEnabled = false {
             didSet {
                 guard keyboardEnabled != oldValue else { return }
@@ -48,7 +50,7 @@ struct PlaybackSurface: UIViewControllerRepresentable {
 
         override var keyCommands: [UIKeyCommand]? {
             guard keyboardEnabled else { return nil }
-            return [
+            let commands = [
                 command(UIKeyCommand.inputLeftArrow, title: "前のファイル", action: #selector(previousFile)),
                 command(UIKeyCommand.inputRightArrow, title: "次のファイル", action: #selector(nextFile)),
                 command(" ", title: "一時停止／再生", action: #selector(togglePlayback)),
@@ -58,6 +60,11 @@ struct PlaybackSurface: UIViewControllerRepresentable {
                 command(UIKeyCommand.inputDownArrow, title: "音量を下げる", action: #selector(volumeDown)),
                 command("i", title: "メディア情報", action: #selector(showInfo))
             ]
+            #if targetEnvironment(macCatalyst)
+            return commands + [command(UIKeyCommand.inputEscape, title: "再生中のフォルダーを開く", action: #selector(browseFiles))]
+            #else
+            return commands
+            #endif
         }
 
         private func command(_ input: String, modifiers: UIKeyModifierFlags = [], title: String, action: Selector) -> UIKeyCommand {
@@ -76,6 +83,7 @@ struct PlaybackSurface: UIViewControllerRepresentable {
         @objc private func volumeUp() { if keyboardEnabled { onVolumeUp?() } }
         @objc private func volumeDown() { if keyboardEnabled { onVolumeDown?() } }
         @objc private func showInfo() { if keyboardEnabled { onShowInfo?() } }
+        @objc private func browseFiles() { if keyboardEnabled { onBrowseFiles?() } }
 
         override func loadView() {
             let surface = SurfaceView()
@@ -124,6 +132,7 @@ struct PlaybackSurface: UIViewControllerRepresentable {
         controller.onShowInfo = onShowInfo
         controller.onVolumeUp = onVolumeUp
         controller.onVolumeDown = onVolumeDown
+        controller.onBrowseFiles = onBrowseFiles
         controller.keyboardEnabled = keyboardEnabled
     }
 
@@ -138,6 +147,7 @@ struct PlaybackSurface: UIViewControllerRepresentable {
         controller.onShowInfo = nil
         controller.onVolumeUp = nil
         controller.onVolumeDown = nil
+        controller.onBrowseFiles = nil
         controller.surface.playerLayer.player = nil
     }
 }

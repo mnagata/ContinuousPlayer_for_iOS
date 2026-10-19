@@ -40,7 +40,8 @@ struct PlayerScreen: View {
                         onSeekForward: { playback.seek(by: 10) },
                         onShowInfo: { sheet = .info },
                         onVolumeUp: { adjustVolume(by: 5) },
-                        onVolumeDown: { adjustVolume(by: -5) }
+                        onVolumeDown: { adjustVolume(by: -5) },
+                        onBrowseFiles: chooseFolder
                     )
                     if ["mp3", "flac", "m4a", "aac", "wav", "ogg", "opus"].contains(playback.state.currentURL?.pathExtension.lowercased() ?? "") {
                         Image(systemName: "waveform").font(.system(size: 72)).foregroundStyle(.cyan.opacity(0.65)).accessibilityHidden(true)
@@ -109,6 +110,10 @@ struct PlayerScreen: View {
                 if controlsVisible {
                     Text("キーボード: ← 前のファイル · → 次のファイル · Space 一時停止／再生\nShift＋←／→ ±10秒 · ↑／↓ 音量 · I メディア情報")
                         .font(.caption2).foregroundStyle(.secondary)
+                    #if targetEnvironment(macCatalyst)
+                    Text("Esc 再生中のフォルダーを開く")
+                        .font(.caption2).foregroundStyle(.secondary)
+                    #endif
                 }
                 if portrait && !controlsVisible {
                     Text("左右タップで±10秒 · 中央タップで一時停止\n左右スワイプで前後のファイル")

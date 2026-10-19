@@ -149,7 +149,7 @@ struct ContentView: View {
                          }, browsingFiles: showingPlayerFileBrowser)
                 .accessibilityHidden(showingPlayerFileBrowser)
             if showingPlayerFileBrowser, let root = library.folderURL {
-                MediaFileBrowser(root: root, initialDirectory: library.currentDirectoryURL ?? root,
+                MediaFileBrowser(root: root, initialDirectory: lastPlaybackURL?.deletingLastPathComponent() ?? library.currentDirectoryURL ?? root,
                                  initialFile: lastPlaybackURL) { url in
                     showingPlayerFileBrowser = false
                     Task {

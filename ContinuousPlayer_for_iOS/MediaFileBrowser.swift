@@ -88,7 +88,7 @@ private struct MediaFolderView: View {
                                     fileRow(url, isFolder: true)
                                 }
                                 .buttonStyle(.plain)
-                                .fileBrowserEntryRowStyle()
+                                .fileBrowserEntryRowStyle(isCurrent: lastSelectionPath == url.standardizedFileURL.path)
                                 .fileBrowserRowInsets(compact: isCompactPhoneLandscape)
                                 .id(url.standardizedFileURL.path)
                             }
@@ -101,7 +101,7 @@ private struct MediaFolderView: View {
                                     fileRow(url, isFolder: false)
                                 }
                                 .buttonStyle(.plain)
-                                .fileBrowserEntryRowStyle()
+                                .fileBrowserEntryRowStyle(isCurrent: lastSelectionPath == url.standardizedFileURL.path)
                                 .fileBrowserRowInsets(compact: isCompactPhoneLandscape)
                                 .id(url.standardizedFileURL.path)
                                 .accessibilityLabel("\(url.lastPathComponent)を選択")
@@ -138,6 +138,7 @@ private struct MediaFolderView: View {
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
                 Button("キャンセル", role: .cancel, action: cancel)
+                    .fileBrowserCancelShortcut()
                     .accessibilityIdentifier("picker.cancel")
             }
         }

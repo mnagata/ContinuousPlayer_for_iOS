@@ -3,6 +3,15 @@ import SwiftUI
 /// Keeps local and DLNA folder/file dialogs visually consistent.
 extension View {
     @ViewBuilder
+    func fileBrowserCancelShortcut() -> some View {
+        #if targetEnvironment(macCatalyst)
+        self.keyboardShortcut(.cancelAction)
+        #else
+        self
+        #endif
+    }
+
+    @ViewBuilder
     func fileBrowserRowHeight(_ compact: Bool) -> some View {
         #if os(tvOS)
         self
@@ -49,10 +58,15 @@ extension View {
     }
 
     @ViewBuilder
-    func fileBrowserEntryRowStyle() -> some View {
+    func fileBrowserEntryRowStyle(isCurrent: Bool = false) -> some View {
         #if os(tvOS)
         self
             .listRowBackground(FileBrowserColors.row)
+        #elseif targetEnvironment(macCatalyst)
+        self
+            .listRowBackground(isCurrent ? Color.cyan.opacity(0.20) : FileBrowserColors.row)
+            .listRowSeparator(.hidden)
+            .accessibilityAddTraits(isCurrent ? .isSelected : [])
         #else
         self
             .listRowBackground(FileBrowserColors.row)

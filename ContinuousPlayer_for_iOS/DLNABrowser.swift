@@ -10,6 +10,7 @@ struct DLNABrowser: View {
     @State private var playback = PlaybackController()
     @State private var selection: Selection?
     @State private var playingFolderName = ""
+    @State private var playingEntries: [DLNAEntry] = []
     @State private var showingPlayerFileBrowser = false
     @State private var returnHome = false
     @State private var folderPath: [Folder] = []
@@ -96,10 +97,8 @@ struct DLNABrowser: View {
                                  playback.pause()
                                  returnHome = true
                                  selection = nil
-                             }, chooseFolder: {
-                                 playback.pause()
-                                 showingPlayerFileBrowser = true
-                             }, browsingFiles: showingPlayerFileBrowser)
+                             }, chooseFolder: openPlayingFolder,
+                             browsingFiles: showingPlayerFileBrowser)
                     .accessibilityHidden(showingPlayerFileBrowser)
                 if showingPlayerFileBrowser, let folder = folderPath.last {
                     PlaybackFileBrowser(client: client, initialFolder: folder,
@@ -136,6 +135,8 @@ struct DLNABrowser: View {
             sizes[url] = entry.size
         }
         guard let url = selected.resourceURL else { return }
+        playingEntries = entries
+        lastSelections[folder] = selected.id
         playback.setPlaylist(urls, displayNames: names, sizes: sizes)
         playback.select(url, autoplay: false)
         playingFolderName = "\(folder.server.name) / \(folder.title)"
@@ -147,6 +148,15 @@ struct DLNABrowser: View {
     }
 
     #if !os(tvOS)
+    private func openPlayingFolder() {
+        playback.pause()
+        if let folder = folderPath.last, let currentURL = playback.state.currentURL,
+           let current = playingEntries.first(where: { $0.resourceURL == currentURL }) {
+            lastSelections[folder] = current.id
+        }
+        showingPlayerFileBrowser = true
+    }
+
     private struct PlaybackFileBrowser: View {
         let client: DLNAClient
         let rootFolder: Folder
@@ -196,6 +206,7 @@ struct DLNABrowser: View {
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button("キャンセル", role: .cancel, action: cancel)
+                        .fileBrowserCancelShortcut()
                         .accessibilityIdentifier("dlna.cancel")
                 }
             }
@@ -611,7 +622,7 @@ private struct DLNAFolderView: View {
                                     .contentShape(Rectangle())
                                 }
                                 .dlnaFolderButtonStyle()
-                                .fileBrowserEntryRowStyle()
+                                .fileBrowserEntryRowStyle(isCurrent: lastSelectionID == entry.id)
                                 .fileBrowserRowInsets(compact: isCompactPhoneLandscape)
                                 .id(entry.id)
                                 .focused($focusedEntryID, equals: entry.id)
@@ -641,7 +652,7 @@ private struct DLNAFolderView: View {
                                     .contentShape(Rectangle())
                                 }
                                 .dlnaFolderButtonStyle()
-                                .fileBrowserEntryRowStyle()
+                                .fileBrowserEntryRowStyle(isCurrent: lastSelectionID == entry.id)
                                 .fileBrowserRowInsets(compact: isCompactPhoneLandscape)
                                 .id(entry.id)
                                 .focused($focusedEntryID, equals: entry.id)
