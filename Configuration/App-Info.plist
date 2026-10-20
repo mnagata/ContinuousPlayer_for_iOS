@@ -2,6 +2,14 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>CFBundleHelpBookFolder</key>
+	<string>ContinuousPlayer.help</string>
+	<key>CFBundleHelpBookName</key>
+	<string>jp.nagu.ContinuousPlayer.help</string>
+	<key>CFBundleLocalizations</key>
+	<array>
+		<string>ja</string>
+	</array>
 	<key>DLNAMulticastEnabled</key>
 	<string>$(DLNA_MULTICAST_ENABLED)</string>
 	<key>NSAppTransportSecurity</key>
