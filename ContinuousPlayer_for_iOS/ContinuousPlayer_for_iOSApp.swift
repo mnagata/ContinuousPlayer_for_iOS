@@ -17,6 +17,7 @@ struct ContinuousPlayer_for_iOSApp: App {
                 ContentView()
                     #if targetEnvironment(macCatalyst)
                     .frame(minWidth: 640, maxWidth: .infinity, minHeight: 360, maxHeight: .infinity)
+                    .background(CatalystInitialWindowSizing().allowsHitTesting(false))
                     #endif
             }
         }
