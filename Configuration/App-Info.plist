@@ -19,5 +19,10 @@
 	</dict>
 	<key>UIFileSharingEnabled</key>
 	<true/>
+	<key>UIApplicationSceneManifest</key>
+	<dict>
+		<key>UIApplicationSupportsTabbedSceneCollection</key>
+		<false/>
+	</dict>
 </dict>
 </plist>

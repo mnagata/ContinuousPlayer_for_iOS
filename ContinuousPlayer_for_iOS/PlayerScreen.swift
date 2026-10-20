@@ -60,24 +60,50 @@ struct PlayerScreen: View {
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                #if !targetEnvironment(macCatalyst)
                 if portrait {
                     // Reserve the same information area in both playback states.
                     informationPanel(portrait: true)
                         .frame(height: geometry.size.height * 0.35)
                 }
+                #endif
             }
+            #if !targetEnvironment(macCatalyst)
             .overlay(alignment: .top) {
                 if controlsVisible { toolbar.background(.black.opacity(0.85)) }
             }
+            #endif
             .overlay(alignment: .bottom) {
+                #if targetEnvironment(macCatalyst)
+                if playback.state.ended || playback.error != nil || playback.pauseReason != nil {
+                    VStack(alignment: .leading, spacing: 8) {
+                        playbackStatusMessages
+                    }
+                    .frame(maxWidth: 760, alignment: .leading)
+                    .padding()
+                    .background(.black.opacity(0.85))
+                }
+                #else
                 if controlsVisible && !portrait {
                     informationPanel(portrait: false)
                         .frame(maxHeight: 110)
                         .background(.black.opacity(0.85))
                 }
+                #endif
             }
         }
         .background(.black).foregroundStyle(.white).preferredColorScheme(.dark)
+        #if targetEnvironment(macCatalyst)
+        .background {
+            CatalystPlaybackTitlebar(filename: playback.currentName,
+                                     isPlaying: playback.state.wantsToPlay,
+                                     actionsEnabled: !browsingFiles && sheet == nil,
+                                     playbackEnabled: !playback.needsFolderSelection,
+                                     home: home, chooseFolder: chooseFolder,
+                                     showInfo: { sheet = .info }, togglePlayback: toggle)
+                .allowsHitTesting(false)
+        }
+        #endif
         // Keep system chrome constant so safe-area changes cannot shift the video.
         .statusBarHidden(true)
         .persistentSystemOverlays(.hidden)
@@ -95,12 +121,17 @@ struct PlayerScreen: View {
         .onDisappear { UIApplication.shared.isIdleTimerDisabled = false }
     }
 
+    @ViewBuilder
+    private var playbackStatusMessages: some View {
+        if playback.state.ended { Label("最後まで再生しました", systemImage: "checkmark.circle") }
+        if let error = playback.error { Text(error).foregroundStyle(.orange) }
+        if let reason = playback.pauseReason { Text(reason).foregroundStyle(.secondary) }
+    }
+
     private func informationPanel(portrait: Bool) -> some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 12) {
-                if playback.state.ended { Label("最後まで再生しました", systemImage: "checkmark.circle") }
-                if let error = playback.error { Text(error).foregroundStyle(.orange) }
-                if let reason = playback.pauseReason { Text(reason).foregroundStyle(.secondary) }
+                playbackStatusMessages
                 if portrait {
                     Text(playback.currentName).font(.headline).textSelection(.enabled)
                     Text("\(info.size)\n\(info.video)\n\(info.audio)").font(.caption).foregroundStyle(.secondary)
@@ -110,10 +141,6 @@ struct PlayerScreen: View {
                 if controlsVisible {
                     Text("キーボード: ← 前のファイル · → 次のファイル · Space 一時停止／再生\nShift＋←／→ ±10秒 · ↑／↓ 音量 · I メディア情報")
                         .font(.caption2).foregroundStyle(.secondary)
-                    #if targetEnvironment(macCatalyst)
-                    Text("Esc 再生中のフォルダーを開く")
-                        .font(.caption2).foregroundStyle(.secondary)
-                    #endif
                 }
                 if portrait && !controlsVisible {
                     Text("左右タップで±10秒 · 中央タップで一時停止\n左右スワイプで前後のファイル")
@@ -193,6 +220,7 @@ struct PlayerScreen: View {
         outputSummary = "出力: \(audio.currentRoute.outputs.map(\.portName).joined(separator: ", ")) · \(String(format: "%.1f", audio.sampleRate / 1000)) kHz"
     }
 }
+
 
 private struct MediaInfoSheet: View {
     let info: MediaInfo
