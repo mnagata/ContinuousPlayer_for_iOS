@@ -56,8 +56,8 @@ struct PlaybackSurface: UIViewControllerRepresentable {
                 command(" ", title: "一時停止／再生", action: #selector(togglePlayback)),
                 command(UIKeyCommand.inputLeftArrow, modifiers: .shift, title: "10秒戻す", action: #selector(seekBackward)),
                 command(UIKeyCommand.inputRightArrow, modifiers: .shift, title: "10秒進める", action: #selector(seekForward)),
-                command(UIKeyCommand.inputUpArrow, title: "音量を上げる", action: #selector(volumeUp)),
-                command(UIKeyCommand.inputDownArrow, title: "音量を下げる", action: #selector(volumeDown)),
+                command(UIKeyCommand.inputUpArrow, title: "10秒戻す", action: #selector(seekBackward)),
+                command(UIKeyCommand.inputDownArrow, title: "10秒進める", action: #selector(seekForward)),
                 command("i", title: "メディア情報", action: #selector(showInfo))
             ]
             #if targetEnvironment(macCatalyst)

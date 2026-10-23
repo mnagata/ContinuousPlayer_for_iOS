@@ -139,7 +139,7 @@ struct PlayerScreen: View {
                 }
                 if controlsVisible { transport }
                 if controlsVisible {
-                    Text("キーボード: ← 前のファイル · → 次のファイル · Space 一時停止／再生\nShift＋←／→ ±10秒 · ↑／↓ 音量 · I メディア情報")
+                    Text("キーボード: ← 前のファイル · → 次のファイル · Space 一時停止／再生\n↑／↓ −10秒／＋10秒 · Shift＋←／→ ±10秒 · I メディア情報")
                         .font(.caption2).foregroundStyle(.secondary)
                 }
                 if portrait && !controlsVisible {
