@@ -1,0 +1,9 @@
+{
+  "schema": 1,
+  "specification": "ContinuousPlayer 共通操作仕様案 v1",
+  "specification_updated": "2026-10-27",
+  "specification_commit": "33c2c535a0ddb2592f5e4ced9bbb655e8d6c8b74",
+  "specification_sha256": "33beee4fd71731c9552fdf162b681c64b11f32e53b9a35cefa20c7d4a59e6167",
+  "implementation_baseline": "8ec1593e2cd5724158834c6d305c3b11cdd8906d",
+  "note": "Legacy tests validate current behavior, including differences from the target specification."
+}

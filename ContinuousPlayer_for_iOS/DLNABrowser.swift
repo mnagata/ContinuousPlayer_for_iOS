@@ -1,17 +1,22 @@
 import SwiftUI
 import UIKit
+import Observation
 
 struct DLNABrowser: View {
     let registeredFolders: RegisteredFolders
     let initialFolder: RegisteredDLNAFolder?
     let onRegistered: () -> Void
+    let session: PlaybackSessionCoordinator
+    let onHome: () -> Void
+    private var playback: PlaybackController { session.playback }
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
-    @State private var playback = PlaybackController()
     @State private var selection: Selection?
     @State private var playingFolderName = ""
     @State private var playingEntries: [DLNAEntry] = []
     @State private var showingPlayerFileBrowser = false
+    @State private var filePresentation: PlaybackController.PresentationSnapshot?
+    @State private var playbackNavigation: PlaybackBrowseNavigation?
     @State private var returnHome = false
     @State private var folderPath: [Folder] = []
     @State private var lastSelections: [Folder: String] = [:]
@@ -21,8 +26,11 @@ struct DLNABrowser: View {
     private let client = DLNAClient()
 
     init(registeredFolders: RegisteredFolders, initialFolder: RegisteredDLNAFolder? = nil,
+         session: PlaybackSessionCoordinator, onHome: @escaping () -> Void = {},
          onRegistered: @escaping () -> Void = {}) {
         self.registeredFolders = registeredFolders
+        self.session = session
+        self.onHome = onHome
         self.initialFolder = initialFolder
         self.onRegistered = onRegistered
     }
@@ -30,7 +38,7 @@ struct DLNABrowser: View {
     private struct Selection: Identifiable {
         let id = UUID()
     }
-    private struct Folder: Hashable {
+    fileprivate struct Folder: Hashable {
         let server: DLNAServer
         let path: [RegisteredDLNAPath]
 
@@ -46,7 +54,9 @@ struct DLNABrowser: View {
     var body: some View {
         NavigationStack(path: $folderPath) {
             Group {
-                if let initialFolder, !showServerSelection {
+                if selection != nil {
+                    Color.clear
+                } else if let initialFolder, !showServerSelection {
                     savedFolderRoot(initialFolder)
                 } else {
                     DLNAServersView(client: client) { server in
@@ -55,6 +65,8 @@ struct DLNABrowser: View {
                 }
             }
             .navigationDestination(for: Folder.self) { folder in
+              Group {
+                if selection == nil {
                 DLNAFolderView(client: client, server: folder.server, objectID: folder.objectID,
                                title: folder.title,
                                registeredFolders: registeredFolders,
@@ -70,10 +82,13 @@ struct DLNABrowser: View {
                 }) { entries, selected in
                     selectFile(entries, selected: selected, in: folder, presentPlayer: true)
                 }
+                }
+              }
                 .toolbar { cancelToolbar }
             }
             .toolbar { cancelToolbar }
         }
+        .accessibilityHidden(selection != nil)
         .fileBrowserDialogContainer()
         .fileBrowserBackShortcut(enabled: selection == nil && !folderPath.isEmpty) {
             guard selection == nil, !folderPath.isEmpty else { return }
@@ -83,47 +98,45 @@ struct DLNABrowser: View {
         .fullScreenCover(item: $selection, onDismiss: {
             showingPlayerFileBrowser = false
             playback.setPlaylist([])
-            if returnHome { dismiss() }
+            if returnHome { onHome(); dismiss() }
         }) { _ in
-            #if os(tvOS)
-            playerScreen(playback: playback, folderName: playingFolderName) {
-                playback.pause()
-                returnHome = true
-                self.selection = nil
-            } chooseFolder: {
-                playback.pause()
-                self.selection = nil
-            }
-            #else
             ZStack {
-                PlayerScreen(playback: playback, folderName: playingFolderName,
+                playerScreen(playback: playback, folderName: playingFolderName,
                              home: {
-                                 playback.pause()
+                                 session.end()
                                  returnHome = true
                                  selection = nil
-                             }, chooseFolder: openPlayingFolder,
-                             browsingFiles: showingPlayerFileBrowser)
+                             }, chooseFolder: openPlayingFolder)
+                    .accessibilityElement(children: .contain)
                     .accessibilityHidden(showingPlayerFileBrowser)
-                if showingPlayerFileBrowser, let folder = folderPath.last {
-                    PlaybackFileBrowser(client: client, initialFolder: folder,
+                    .allowsHitTesting(!showingPlayerFileBrowser)
+                if showingPlayerFileBrowser, let navigation = playbackNavigation {
+                    PlaybackFileBrowser(client: client, navigation: navigation,
                                         registeredFolders: registeredFolders,
                                         lastSelections: $lastSelections,
-                                        cancel: { showingPlayerFileBrowser = false }) { entries, selected, folder in
+                                        cancel: closePlayingFolder) { entries, selected, folder in
                         selectFile(entries, selected: selected, in: folder, presentPlayer: false)
                     }
+                    .accessibilityElement(children: .contain)
                     .accessibilityIdentifier("player.dlnaFileBrowserOverlay")
                 }
             }
+            #if os(tvOS)
+            .onExitCommand(perform: browserExitAction)
+            .onPlayPauseCommand(perform: togglePlaybackFromRemote)
             #endif
         }
-        .onChange(of: scenePhase, initial: true) { _, phase in
-            #if targetEnvironment(macCatalyst)
-            // Switching to another Mac app should not interrupt playback.
-            playback.setActive(phase != .background)
-            #else
-            playback.setActive(phase == .active)
-            #endif
-        }
+    }
+
+    private var browserExitAction: (() -> Void)? {
+        if showingPlayerFileBrowser { return { backPlayingFolder() } }
+        guard !playback.isPresenting else { return nil }
+        return { openPlayingFolder() }
+    }
+
+    private func togglePlaybackFromRemote() {
+        guard !playback.isPresenting else { return }
+        if playback.state.wantsToPlay { playback.pause() } else { playback.resume() }
     }
 
     private func selectFile(_ entries: [DLNAEntry], selected: DLNAEntry,
@@ -142,7 +155,8 @@ struct DLNABrowser: View {
         playingEntries = entries
         lastSelections[folder] = selected.id
         playback.setPlaylist(urls, displayNames: names, sizes: sizes)
-        playback.select(url, autoplay: false)
+        playback.commitSelection(url)
+        filePresentation = nil
         playingFolderName = "\(folder.server.name) / \(folder.title)"
         if presentPlayer { selection = Selection() }
         else {
@@ -151,26 +165,60 @@ struct DLNABrowser: View {
         }
     }
 
-    #if !os(tvOS)
     private func openPlayingFolder() {
-        playback.pause()
+        guard !showingPlayerFileBrowser else { return }
+        filePresentation = playback.beginPresentation()
         if let folder = folderPath.last, let currentURL = playback.state.currentURL,
            let current = playingEntries.first(where: { $0.resourceURL == currentURL }) {
             lastSelections[folder] = current.id
         }
+        guard let folder = folderPath.last else {
+            if let filePresentation { playback.endPresentation(filePresentation) }
+            filePresentation = nil
+            return
+        }
+        playbackNavigation = PlaybackBrowseNavigation(folder: folder)
         showingPlayerFileBrowser = true
     }
 
-    private struct PlaybackFileBrowser: View {
-        let client: DLNAClient
+    private func backPlayingFolder() {
+        if let navigation = playbackNavigation, !navigation.path.isEmpty {
+            navigation.path.removeLast()
+        } else { closePlayingFolder() }
+    }
+
+    private func closePlayingFolder() {
+        showingPlayerFileBrowser = false
+        if let filePresentation { playback.endPresentation(filePresentation) }
+        filePresentation = nil
+        playbackNavigation = nil
+    }
+
+    @MainActor @Observable
+    fileprivate final class PlaybackBrowseNavigation {
         let rootFolder: Folder
+        var path: [Folder]
+        init(folder: Folder) {
+            let hierarchy = folder.hierarchy
+            rootFolder = hierarchy.first ?? folder
+            path = Array(hierarchy.dropFirst())
+        }
+    }
+
+    private struct PlaybackFileBrowser: View {
+        @Environment(\.scenePhase) private var scenePhase
+        let client: DLNAClient
+        @Bindable var navigation: PlaybackBrowseNavigation
         let registeredFolders: RegisteredFolders
         @Binding var lastSelections: [Folder: String]
         let cancel: () -> Void
         let select: ([DLNAEntry], DLNAEntry, Folder) -> Void
-        @State private var path: [Folder]
+        @State private var focusRevision = 0
+        #if os(tvOS)
+        @FocusState private var cancelFocused: Bool
+        #endif
 
-        init(client: DLNAClient, initialFolder: Folder, registeredFolders: RegisteredFolders,
+        init(client: DLNAClient, navigation: PlaybackBrowseNavigation, registeredFolders: RegisteredFolders,
              lastSelections: Binding<[Folder: String]>, cancel: @escaping () -> Void,
              select: @escaping ([DLNAEntry], DLNAEntry, Folder) -> Void) {
             self.client = client
@@ -178,22 +226,36 @@ struct DLNABrowser: View {
             self._lastSelections = lastSelections
             self.cancel = cancel
             self.select = select
-            let hierarchy = initialFolder.hierarchy
-            rootFolder = hierarchy.first ?? initialFolder
-            _path = State(initialValue: Array(hierarchy.dropFirst()))
+            self.navigation = navigation
         }
 
         var body: some View {
-            NavigationStack(path: $path) {
-                folderView(rootFolder)
+            NavigationStack(path: $navigation.path) {
+                folderView(navigation.rootFolder)
                     .navigationDestination(for: Folder.self) { folder in
                         folderView(folder)
                     }
             }
+            #if os(tvOS)
+            .safeAreaInset(edge: .bottom) {
+                Button(action: cancel) {
+                    TVFolderDialogAction(title: "キャンセル", systemImage: "xmark.circle",
+                                         isFocused: cancelFocused)
+                }
+                .buttonStyle(.plain)
+                .focused($cancelFocused)
+                .accessibilityIdentifier("dlna.cancel")
+                .padding(.vertical, 12)
+            }
+            .defaultFocus($cancelFocused, true)
+            #endif
             .fileBrowserDialogContainer()
-            .fileBrowserBackShortcut(enabled: !path.isEmpty) {
-                guard !path.isEmpty else { return }
-                path.removeLast()
+            .onChange(of: scenePhase, initial: true) { _, phase in
+                if phase == .active { focusRevision += 1 }
+            }
+            .fileBrowserBackShortcut(enabled: !navigation.path.isEmpty) {
+                guard !navigation.path.isEmpty else { return }
+                navigation.path.removeLast()
             }
         }
 
@@ -202,15 +264,17 @@ struct DLNABrowser: View {
                            title: folder.title, registeredFolders: registeredFolders,
                            registrationPath: folder.path, canRegisterFolder: false,
                            onRegistered: {},
+                           focusRestorationID: focusRevision,
                            lastSelectionID: Binding(get: { lastSelections[folder] },
                                                     set: { lastSelections[folder] = $0 }),
                            openFolder: { entry in
                 lastSelections[folder] = entry.id
-                path.append(Folder(server: folder.server,
+                navigation.path.append(Folder(server: folder.server,
                                    path: folder.path + [RegisteredDLNAPath(id: entry.id, title: entry.title)]))
             }) { entries, selected in
                 select(entries, selected, folder)
             }
+            #if !os(tvOS)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button("キャンセル", role: .cancel, action: cancel)
@@ -218,9 +282,9 @@ struct DLNABrowser: View {
                         .accessibilityIdentifier("dlna.cancel")
                 }
             }
+            #endif
         }
     }
-    #endif
 
     private func savedFolderRoot(_ folder: RegisteredDLNAFolder) -> some View {
         VStack(spacing: 16) {
@@ -280,22 +344,26 @@ struct DLNABrowser: View {
     private func playerScreen(playback: PlaybackController, folderName: String,
                               home: @escaping () -> Void, chooseFolder: @escaping () -> Void) -> some View {
         #if os(tvOS)
-        TVPlayerScreen(playback: playback, folderName: folderName, home: home, chooseFolder: chooseFolder)
+        TVPlayerScreen(playback: playback, folderName: folderName, home: home, chooseFolder: chooseFolder,
+                           browsingFiles: showingPlayerFileBrowser)
             .presentationBackground(.black)
         #else
-        PlayerScreen(playback: playback, folderName: folderName, home: home, chooseFolder: chooseFolder)
+        PlayerScreen(playback: playback, folderName: folderName, home: home, chooseFolder: chooseFolder,
+                         browsingFiles: showingPlayerFileBrowser)
         #endif
     }
 
     @ToolbarContentBuilder
     private var cancelToolbar: some ToolbarContent {
-        ToolbarItem(placement: .topBarLeading) {
+        if selection == nil {
+          ToolbarItem(placement: .topBarLeading) {
             // Dismiss the entire picker, even when a nested folder is displayed.
             Button(role: .cancel) { dismiss() } label: {
                 Text("キャンセル").dlnaToolbarLabelStyle()
             }
                 .accessibilityIdentifier("dlna.cancel")
                 .dlnaToolbarButtonStyle()
+          }
         }
     }
 }
@@ -586,6 +654,7 @@ private struct DLNAFolderView: View {
     let registrationPath: [RegisteredDLNAPath]
     let canRegisterFolder: Bool
     let onRegistered: () -> Void
+    var focusRestorationID = 0
     @Binding var lastSelectionID: String?
     let openFolder: (DLNAEntry) -> Void
     let play: ([DLNAEntry], DLNAEntry) -> Void
@@ -683,10 +752,11 @@ private struct DLNAFolderView: View {
                 isCompactPhoneLandscape = isLandscape
             }
             #endif
-            .task(id: isLoading) {
+            .task(id: "\(isLoading)-\(focusRestorationID)") {
                 // NavigationStack may recreate the parent; restore by the server's stable object ID.
                 guard !isLoading, error == nil, let id = lastSelectionID,
                       entries.contains(where: { $0.id == id }) else { return }
+                focusedEntryID = nil
                 await Task.yield()
                 guard !Task.isCancelled else { return }
                 proxy.scrollTo(id, anchor: .center)
@@ -824,7 +894,7 @@ private struct DLNAFolderView: View {
     }
 }
 
-#Preview("DLNAサーバー") { DLNABrowser(registeredFolders: RegisteredFolders()) }
+#Preview("DLNAサーバー") { DLNABrowser(registeredFolders: RegisteredFolders(), session: PlaybackSessionCoordinator()) }
 
 private extension View {
 

@@ -7,9 +7,10 @@ struct TVPlayerScreen: View {
     let folderName: String
     let home: () -> Void
     let chooseFolder: () -> Void
+    var browsingFiles = false
     @State private var showsControls = false
     @State private var showsInfo = false
-    @State private var startedPlayback = false
+    @State private var infoPresentation: PlaybackController.PresentationSnapshot?
     @FocusState private var focus: Focus?
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.accessibilityVoiceOverEnabled) private var voiceOver
@@ -19,10 +20,45 @@ struct TVPlayerScreen: View {
     }
 
     var body: some View {
+        playerContent
+        .background(.black).foregroundStyle(.white).preferredColorScheme(.dark)
+        #if DEBUG
+        .overlay(alignment: .topTrailing) { PlaybackSessionStatus(playback: playback) }
+        #endif
+        .onAppear {
+            UIApplication.shared.isIdleTimerDisabled = true
+            updateFocus()
+        }
+        .onDisappear {
+            UIApplication.shared.isIdleTimerDisabled = false
+        }
+        .onChange(of: browsingFiles) { _, browsing in
+            if browsing { focus = nil } else { updateFocus() }
+        }
+        .onChange(of: controlsVisible) { _, _ in updateFocus() }
+        .onChange(of: scenePhase) { _, phase in
+            UIApplication.shared.isIdleTimerDisabled = phase == .active
+        }
+        .sheet(isPresented: $showsInfo, onDismiss: closeInfo) {
+            VStack(alignment: .leading, spacing: 28) {
+                Text("メディア情報").font(.title)
+                Text(playback.mediaInfo.name).font(.headline).lineLimit(3)
+                Text("サイズ: \(playback.mediaInfo.size)")
+                Text("映像: \(playback.mediaInfo.video)")
+                Text("音声: \(playback.mediaInfo.audio)")
+                Button("閉じる") { showsInfo = false }
+                    .accessibilityIdentifier("player.info.close")
+            }
+            .padding(60)
+            .onExitCommand { showsInfo = false }
+        }
+    }
+
+    private var playerContent: some View {
         ZStack {
             TVPlaybackSurface(player: playback.player)
                 .ignoresSafeArea()
-            if !controlsVisible {
+            if !controlsVisible && !browsingFiles {
                 TVRemoteInputSurface(currentName: playback.currentName,
                                      onPrevious: { playback.move(-1) },
                                      onNext: { playback.move(1) },
@@ -41,7 +77,7 @@ struct TVPlayerScreen: View {
                     .padding(30).background(.black.opacity(0.8), in: RoundedRectangle(cornerRadius: 18))
                     .allowsHitTesting(false)
             }
-            if controlsVisible {
+            if controlsVisible && !browsingFiles && !showsInfo {
                 VStack(alignment: .leading, spacing: 24) {
                     Text(playback.currentName).font(.title2.bold()).lineLimit(2)
                     Text(folderName).font(.caption).foregroundStyle(.secondary).lineLimit(1)
@@ -68,13 +104,13 @@ struct TVPlayerScreen: View {
                     HStack(spacing: 30) {
                         Button("一覧に戻る", action: leavePlayer)
                             .accessibilityIdentifier("player.chooseFolder")
-                        Button("メディア情報") { showsInfo = true }
+                        Button("メディア情報", action: openInfo)
                         Button("ホームに戻る") { playback.pause(); home() }
                         if playback.state.wantsToPlay && !voiceOver {
                             Button("映像に戻る") { showsControls = false }
                         }
                     }
-                    Text("再生／停止ボタンで切り替え · 戻るボタンで操作表示／一覧へ")
+                    Text("再生／停止ボタンで切り替え · 戻るボタンでファイル一覧へ")
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 .padding(48)
@@ -83,42 +119,18 @@ struct TVPlayerScreen: View {
                 .frame(maxHeight: .infinity, alignment: .bottom)
             }
         }
-        .background(.black).foregroundStyle(.white).preferredColorScheme(.dark)
-        .onPlayPauseCommand { if !showsInfo { toggle() } }
-        .onExitCommand {
-            if showsInfo { showsInfo = false }
-            else if controlsVisible { leavePlayer() }
-            else { showsControls = true }
-        }
-        .onAppear {
-            UIApplication.shared.isIdleTimerDisabled = true
-            // Returning from a presented detail view must not resume a paused item.
-            if !startedPlayback {
-                startedPlayback = true
-                playback.resume()
-            }
-            updateFocus()
-        }
-        .onDisappear {
-            UIApplication.shared.isIdleTimerDisabled = false
-            playback.pause()
-        }
-        .onChange(of: controlsVisible) { _, _ in updateFocus() }
-        .onChange(of: scenePhase) { _, phase in
-            UIApplication.shared.isIdleTimerDisabled = phase == .active
-        }
-        .sheet(isPresented: $showsInfo, onDismiss: { updateFocus() }) {
-            VStack(alignment: .leading, spacing: 28) {
-                Text("メディア情報").font(.title)
-                Text(playback.mediaInfo.name).font(.headline).lineLimit(3)
-                Text("サイズ: \(playback.mediaInfo.size)")
-                Text("映像: \(playback.mediaInfo.video)")
-                Text("音声: \(playback.mediaInfo.audio)")
-                Button("閉じる") { showsInfo = false }
-            }
-            .padding(60)
-            .onExitCommand { showsInfo = false }
-        }
+    }
+
+    private func openInfo() {
+        guard !showsInfo else { return }
+        infoPresentation = playback.beginPresentation()
+        showsInfo = true
+    }
+
+    private func closeInfo() {
+        if let infoPresentation { playback.endPresentation(infoPresentation) }
+        infoPresentation = nil
+        updateFocus()
     }
 
     private func toggle() {
@@ -127,11 +139,13 @@ struct TVPlayerScreen: View {
     }
 
     private func leavePlayer() {
-        playback.pause()
         chooseFolder()
     }
 
-    private func updateFocus() { focus = controlsVisible ? .play : .video }
+    private func updateFocus() {
+        guard !browsingFiles else { return }
+        focus = controlsVisible ? .play : .video
+    }
 }
 
 /// Keep transport commands in PlaybackController so end-of-file and error recovery remain shared.

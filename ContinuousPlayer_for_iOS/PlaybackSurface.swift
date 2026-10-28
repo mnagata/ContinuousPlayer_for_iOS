@@ -5,7 +5,6 @@ import UIKit
 /// 操作はPlaybackControllerを経由し、再生意図とAVPlayerを同期させる。
 struct PlaybackSurface: UIViewControllerRepresentable {
     let player: AVPlayer
-    var onFirstAppearance: (() -> Void)? = nil
     var keyboardEnabled = false
     var onPrevious: (() -> Void)? = nil
     var onNext: (() -> Void)? = nil
@@ -23,7 +22,6 @@ struct PlaybackSurface: UIViewControllerRepresentable {
     }
 
     final class SurfaceController: UIViewController {
-        var onFirstAppearance: (() -> Void)?
         var onPrevious: (() -> Void)?
         var onNext: (() -> Void)?
         var onSeekBackward: (() -> Void)?
@@ -43,7 +41,6 @@ struct PlaybackSurface: UIViewControllerRepresentable {
                 }
             }
         }
-        private var appeared = false
         var surface: SurfaceView { view as! SurfaceView }
 
         override var canBecomeFirstResponder: Bool { keyboardEnabled }
@@ -95,10 +92,6 @@ struct PlaybackSurface: UIViewControllerRepresentable {
         override func viewDidAppear(_ animated: Bool) {
             super.viewDidAppear(animated)
             if keyboardEnabled { becomeFirstResponder() }
-            // Wait for presentation to finish; dismissing an info sheet must not resume playback.
-            guard !appeared else { return }
-            appeared = true
-            onFirstAppearance?()
         }
 
         override func viewWillDisappear(_ animated: Bool) {
@@ -110,7 +103,6 @@ struct PlaybackSurface: UIViewControllerRepresentable {
     func makeUIViewController(context: Context) -> SurfaceController {
         let controller = SurfaceController()
         controller.surface.playerLayer.player = player
-        controller.onFirstAppearance = onFirstAppearance
         configureKeyboard(controller)
         return controller
     }
@@ -119,7 +111,6 @@ struct PlaybackSurface: UIViewControllerRepresentable {
         if controller.surface.playerLayer.player !== player {
             controller.surface.playerLayer.player = player
         }
-        controller.onFirstAppearance = onFirstAppearance
         configureKeyboard(controller)
     }
 
@@ -137,7 +128,6 @@ struct PlaybackSurface: UIViewControllerRepresentable {
     }
 
     static func dismantleUIViewController(_ controller: SurfaceController, coordinator: ()) {
-        controller.onFirstAppearance = nil
         controller.keyboardEnabled = false
         controller.onPrevious = nil
         controller.onNext = nil

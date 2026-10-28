@@ -9,7 +9,14 @@ private enum FolderAction {
 }
 
 struct ContentView: View {
-    @State private var library = MediaLibrary()
+    @State private var session: PlaybackSessionCoordinator
+    @State private var library: MediaLibrary
+
+    init() {
+        let session = PlaybackSessionCoordinator()
+        _session = State(initialValue: session)
+        _library = State(initialValue: MediaLibrary(playback: session.playback))
+    }
     @State private var registeredFolders = RegisteredFolders()
     private enum Presentation: Identifiable, Equatable {
         case folder, browser, player, dlna(RegisteredDLNAFolder?)
@@ -29,6 +36,7 @@ struct ContentView: View {
     @State private var pickerHasDismissed = false
     @State private var showingLibrary = false
     @State private var showingPlayerFileBrowser = false
+    @State private var filePresentation: PlaybackController.PresentationSnapshot?
     @State private var playerFileError: String?
     @State private var pickerError: String?
     @State private var showingSavedFolders = false
@@ -50,7 +58,7 @@ struct ContentView: View {
             .disabled(library.isLoading)
             .navigationDestination(isPresented: $showingLibrary) {
                 PlaylistView(library: library, chooseFolder: beginAuthorization) { url in
-                    library.playback.select(url, autoplay: false)
+                    library.playback.commitSelection(url)
                     presentation = .player
                 }
             }
@@ -99,14 +107,7 @@ struct ContentView: View {
                 }
             }
         }
-        .onChange(of: scenePhase, initial: true) { _, phase in
-            #if targetEnvironment(macCatalyst)
-            // Switching to another Mac app should not interrupt playback.
-            library.playback.setActive(phase != .background)
-            #else
-            library.playback.setActive(phase == .active)
-            #endif
-        }
+        .playbackSceneLifecycle(session: session)
     }
 
     @ViewBuilder
@@ -125,10 +126,10 @@ struct ContentView: View {
                 } cancel: { presentation = nil }
             }
         case .dlna(let folder):
-            DLNABrowser(registeredFolders: registeredFolders, initialFolder: folder) {
+            DLNABrowser(registeredFolders: registeredFolders, initialFolder: folder, session: session, onRegistered: {
                 showSavedFoldersAfterDLNA = true
                 presentation = nil
-            }
+            })
         case .player:
             localPlayerScreen()
         }
@@ -144,20 +145,24 @@ struct ContentView: View {
                              showingLibrary = false
                          }, chooseFolder: {
                              lastPlaybackURL = library.playback.state.currentURL
-                             library.playback.pause()
+                             filePresentation = library.playback.beginPresentation()
                              showingPlayerFileBrowser = true
                          }, browsingFiles: showingPlayerFileBrowser)
+                .accessibilityElement(children: .contain)
                 .accessibilityHidden(showingPlayerFileBrowser)
             if showingPlayerFileBrowser, let root = library.folderURL {
                 MediaFileBrowser(root: root, initialDirectory: lastPlaybackURL?.deletingLastPathComponent() ?? library.currentDirectoryURL ?? root,
                                  initialFile: lastPlaybackURL) { url in
+                    filePresentation = nil
                     showingPlayerFileBrowser = false
                     Task {
-                        await library.playFromSelection(url, autoplay: false)
+                        await library.playFromSelection(url)
                         playerFileError = library.error
                     }
                 } cancel: {
                     showingPlayerFileBrowser = false
+                    if let filePresentation { library.playback.endPresentation(filePresentation) }
+                    filePresentation = nil
                 }
                 .accessibilityIdentifier("player.fileBrowserOverlay")
             }
@@ -231,7 +236,7 @@ struct ContentView: View {
         let isFile = pickedFile
         Task {
             if isFile {
-                await library.playFromSelection(url, autoplay: false)
+                await library.playFromSelection(url)
                 showPlaybackOrError()
             } else {
                 await library.authorizeFolder(url)

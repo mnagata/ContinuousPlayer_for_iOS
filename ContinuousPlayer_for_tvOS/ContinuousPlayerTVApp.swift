@@ -3,11 +3,22 @@ import SwiftUI
 @main
 struct ContinuousPlayerTVApp: App {
     var body: some Scene {
-        WindowGroup { TVHomeScreen() }
+        WindowGroup {
+            #if DEBUG
+            if ProcessInfo.processInfo.arguments.contains("--common-spec-probe") {
+                CommonSpecProbeScreen()
+            } else {
+                TVHomeScreen()
+            }
+            #else
+            TVHomeScreen()
+            #endif
+        }
     }
 }
 
 private struct TVHomeScreen: View {
+    @State private var session = PlaybackSessionCoordinator()
     @State private var showsSavedFolders = false
     @State private var registeredFolders = RegisteredFolders()
 
@@ -33,8 +44,10 @@ private struct TVHomeScreen: View {
         .background(HomeAppearance.background.ignoresSafeArea())
         .tint(.cyan)
         .preferredColorScheme(.dark)
+        .playbackSceneLifecycle(session: session)
         .fullScreenCover(isPresented: $showsSavedFolders) {
-            TVSavedFoldersView(registeredFolders: registeredFolders)
+            TVSavedFoldersView(registeredFolders: registeredFolders, session: session,
+                               onHome: { session.end(); showsSavedFolders = false })
                 .preferredColorScheme(.dark)
                 .tint(TVFolderColors.accent)
                 .presentationBackground(Color.black.opacity(0.78))
@@ -44,6 +57,8 @@ private struct TVHomeScreen: View {
 
 private struct TVSavedFoldersView: View {
     let registeredFolders: RegisteredFolders
+    let session: PlaybackSessionCoordinator
+    let onHome: () -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var browserSelection: BrowserSelection?
     @State private var pendingRemoval: RegisteredDLNAFolder?
@@ -162,7 +177,8 @@ private struct TVSavedFoldersView: View {
         .background(Color.black.opacity(0.78))
         .fullScreenCover(item: $browserSelection) { selection in
             DLNABrowser(registeredFolders: registeredFolders,
-                        initialFolder: selection.folder,
+                        initialFolder: selection.folder, session: session,
+                        onHome: onHome,
                         onRegistered: { browserSelection = nil })
                 .preferredColorScheme(.dark)
                 .tint(TVFolderColors.accent)

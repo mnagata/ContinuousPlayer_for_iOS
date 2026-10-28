@@ -10,7 +10,7 @@ cleanup() {
     rm -rf "$output"
 }
 trap cleanup EXIT
-DLNA_FIXTURE_PORT=18765 python3 tests/dlna-fixture-server.py "$output" "${1:-validation/fixtures/09_h264.mp4}" > "$output/server.log" 2>&1 &
+DLNA_FIXTURE_PORT="${DLNA_FIXTURE_PORT:-18765}" python3 tests/dlna-fixture-server.py "$output" "${1:-validation/fixtures/09_h264.mp4}" > "$output/server.log" 2>&1 &
 server_pid=$!
 count=0
 while [ ! -f "$output/port" ]; do
@@ -21,5 +21,5 @@ done
 xcodebuild -project ContinuousPlayer_for_iOS.xcodeproj -scheme DeviceValidation \
     -destination "platform=iOS Simulator,id=$SIMULATOR_ID" \
     -derivedDataPath /tmp/ContinuousPlayer-DLNA-build \
-    -only-testing:DeviceUITests/DLNAUITests \
+    -only-testing:"${ONLY_TESTING:-DeviceUITests/DLNAUITests}" \
     -parallel-testing-enabled NO test CODE_SIGNING_ALLOWED=NO

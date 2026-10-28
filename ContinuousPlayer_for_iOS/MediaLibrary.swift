@@ -4,7 +4,7 @@ import Observation
 /// Owns folder access for as long as its playlist can be played.
 @MainActor @Observable
 final class MediaLibrary {
-    let playback = PlaybackController()
+    let playback: PlaybackController
     private(set) var files: [URL] = []
     private(set) var folderName = ""
     private(set) var isLoading = false
@@ -19,7 +19,8 @@ final class MediaLibrary {
     private let bookmarkKey: String
     private let defaults: UserDefaults
 
-    init(defaults: UserDefaults = .standard) {
+    init(defaults: UserDefaults = .standard, playback: PlaybackController? = nil) {
+        self.playback = playback ?? PlaybackController()
         self.defaults = defaults
         #if DEBUG
         bookmarkKey = ProcessInfo.processInfo.arguments.contains("--ui-bookmark-tests")
@@ -128,10 +129,13 @@ final class MediaLibrary {
         defer { isLoading = false }
         error = nil
         needsFolderPermission = false
-        playback.setPlaylist([])
+        playback.stageSelection(selectedURL)
+        let revision = playback.sessionRevision
+        let interruption = playback.interruptionRevision
         files = []
         guard MediaScanner.isSupported(selectedURL) else {
             error = "このファイル形式は対象外です。対応形式: " + MediaScanner.extensions.sorted().joined(separator: ", ")
+            playback.selectionFailed(error!)
             return
         }
         let accessing = selectedURL.startAccessingSecurityScopedResource()
@@ -153,18 +157,21 @@ final class MediaLibrary {
             }
             #endif
             let sorted = try await MediaScanner.scan(parent)
+            guard !Task.isCancelled, playback.sessionRevision == revision else { return }
             guard let selected = sorted.first(where: {
                 $0.standardizedFileURL.resolvingSymlinksInPath() == selectedURL.standardizedFileURL.resolvingSymlinksInPath()
             }) else {
                 error = "選択したファイルは再生対象ではありません。動画・音声ファイルを選んでください。"
+                playback.selectionFailed(error!)
                 return
             }
             files = sorted
             currentDirectoryURL = parent.appendingPathComponent("", isDirectory: true)
             folderName = parent.lastPathComponent
             playback.setPlaylist(sorted)
-            playback.select(selected, autoplay: autoplay)
+            playback.commitSelection(selected, autoplay: autoplay && playback.interruptionRevision == interruption)
         } catch {
+            guard !Task.isCancelled, playback.sessionRevision == revision else { return }
             needsFolderPermission = PlaybackController.isAccessFailure(error)
             #if targetEnvironment(macCatalyst)
             self.error = needsFolderPermission
@@ -175,6 +182,7 @@ final class MediaLibrary {
                 ? "ホームの「USBストレージへのアクセスを許可」で、選択したファイルのフォルダーを許可してください。"
                 : "同じフォルダーのファイルを読み込めません。\(error.localizedDescription)"
             #endif
+            playback.selectionFailed(self.error!)
         }
     }
 

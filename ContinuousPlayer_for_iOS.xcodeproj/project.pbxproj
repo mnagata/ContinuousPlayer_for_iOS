@@ -137,6 +137,7 @@
 				8804D4C6305E88610026CA06 /* Sources */,
 				8804D4C7305E88610026CA06 /* Frameworks */,
 				8804D4C8305E88610026CA06 /* Resources */,
+				D10000000000000000000001 /* Mac lifecycle bridge */,
 			);
 			buildRules = (
 			);
@@ -269,6 +270,27 @@
 			);
 		};
 /* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		D10000000000000000000001 /* Mac lifecycle bridge */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			inputPaths = (
+				"$(SRCROOT)/scripts/build-catalyst-lifecycle.sh",
+				"$(SRCROOT)/MacSupport/PlaybackLifecycle.m",
+				"$(SRCROOT)/MacSupport/Info.plist",
+			);
+			name = "Mac lifecycle bridge";
+			outputPaths = (
+				"$(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/PlugIns/MacPlaybackLifecycle.bundle",
+			);
+			shellPath = /bin/sh;
+			shellScript = (
+				"sh \"$SRCROOT/scripts/build-catalyst-lifecycle.sh\"",
+				"",
+			);
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		8804D4C6305E88610026CA06 /* Sources */ = {

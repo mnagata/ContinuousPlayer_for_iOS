@@ -3,8 +3,8 @@ set -euo pipefail
 
 MODE="${1:-run}"
 case "$MODE" in
-  run|--debug|--logs|--telemetry|--verify|--build-only) ;;
-  *) echo "usage: $0 [--debug|--logs|--telemetry|--verify|--build-only]" >&2; exit 2 ;;
+  run|--debug|--logs|--telemetry|--verify|--build-only|--probe) ;;
+  *) echo "usage: $0 [--debug|--logs|--telemetry|--verify|--build-only|--probe]" >&2; exit 2 ;;
 esac
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}"
@@ -17,7 +17,7 @@ APP_BINARY="$APP_BUNDLE/Contents/MacOS/$APP_NAME"
 
 # Match the Catalyst executable path, leaving iOS/tvOS Simulator processes alone.
 if [[ "$MODE" != --build-only ]]; then
-  pkill -f -x "$APP_BINARY" >/dev/null 2>&1 || true
+  pkill -f -x "$APP_BINARY( --common-spec-probe)?" >/dev/null 2>&1 || true
 fi
 cd "$ROOT_DIR"
 xcodebuild -project ContinuousPlayer_for_iOS.xcodeproj \
@@ -29,6 +29,7 @@ xcodebuild -project ContinuousPlayer_for_iOS.xcodeproj \
 case "$MODE" in
   --build-only) exit 0 ;;
   --debug) exec lldb -- "$APP_BINARY" ;;
+  --probe) /usr/bin/open -n "$APP_BUNDLE" --args --common-spec-probe ;;
   *) /usr/bin/open -n "$APP_BUNDLE" ;;
 esac
 case "$MODE" in
@@ -36,7 +37,7 @@ case "$MODE" in
   --telemetry) exec /usr/bin/log stream --info --style compact --predicate 'subsystem == "jp.nagu.ContinuousPlayer-for-iOS"' ;;
   --verify)
     sleep 2
-    pgrep -f -x "$APP_BINARY" >/dev/null
+    pgrep -f -x "$APP_BINARY( --common-spec-probe)?" >/dev/null
     echo "Mac Catalyst app is running: $APP_BUNDLE"
     ;;
 esac

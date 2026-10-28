@@ -25,6 +25,71 @@ final class PlaybackController {
     private var lastAdvance = ContinuousClock.now
     private var isActive = true
     private var interrupted = false
+    private(set) var interruptionRevision = 0
+    private(set) var sessionRevision = 0
+    private var presentationRevision = 0
+    private var presentations: [UUID: PresentationSnapshot] = [:]
+    private var selectionMustNotSkip = false
+
+    struct PresentationSnapshot {
+        let id: UUID
+        let sessionRevision: Int
+        let interruptionRevision: Int
+        let generation: Int
+        let url: URL?
+        let seconds: Double
+        let shouldResume: Bool
+    }
+
+    var isPresenting: Bool { !presentations.isEmpty }
+    var allowsPlayback: Bool { isActive && !interrupted && !needsFolderSelection }
+
+    /// The engine and source grants remain owned by the scene while UI is on top.
+    func beginPresentation() -> PresentationSnapshot {
+        let snapshot = PresentationSnapshot(id: UUID(), sessionRevision: sessionRevision,
+            interruptionRevision: interruptionRevision, generation: generation,
+            url: state.currentURL, seconds: player.currentTime().seconds,
+            shouldResume: state.wantsToPlay && !state.ended && error == nil)
+        presentations[snapshot.id] = snapshot
+        presentationRevision += 1
+        pause()
+        return snapshot
+    }
+
+    func endPresentation(_ snapshot: PresentationSnapshot) {
+        guard presentations.removeValue(forKey: snapshot.id) != nil else { return }
+        presentationRevision += 1
+        guard presentations.isEmpty, snapshot.sessionRevision == sessionRevision,
+              snapshot.interruptionRevision == interruptionRevision,
+              snapshot.generation == generation, snapshot.url == state.currentURL,
+              snapshot.shouldResume, error == nil else { return }
+        resume()
+    }
+
+    func discardPresentations() {
+        presentations.removeAll()
+        presentationRevision += 1
+    }
+
+    func stopSession() { setPlaylist([]) }
+
+    /// Commit a user selection. Failure must remain attached to this selection.
+    func commitSelection(_ url: URL, autoplay: Bool = true) {
+        discardPresentations()
+        select(url, autoplay: autoplay && isActive && !interrupted, stopOnFailure: true)
+    }
+
+    func stageSelection(_ url: URL) {
+        setPlaylist([url])
+        _ = state.select(url)
+        state.wantsToPlay = false
+    }
+
+    func selectionFailed(_ message: String) {
+        pause()
+        clearItem()
+        error = message
+    }
     #if os(iOS) || os(tvOS)
     private var audioSessionReady = false
     private var audioSessionGeneration = 0
@@ -42,14 +107,15 @@ final class PlaybackController {
         let center = NotificationCenter.default
         systemNotifications.append(center.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: .main) { [weak self] notification in
             let began = (notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt) == AVAudioSession.InterruptionType.began.rawValue
-            Task { @MainActor [weak self] in self?.setInterrupted(began) }
+            MainActor.assumeIsolated { self?.setInterrupted(began) }
         })
         systemNotifications.append(center.addObserver(forName: AVAudioSession.routeChangeNotification, object: nil, queue: .main) { [weak self] notification in
             guard (notification.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt) == AVAudioSession.RouteChangeReason.oldDeviceUnavailable.rawValue else { return }
-            Task { @MainActor [weak self] in self?.outputDisconnected() }
+            MainActor.assumeIsolated { self?.outputDisconnected() }
         })
         systemNotifications.append(center.addObserver(forName: AVAudioSession.mediaServicesWereResetNotification, object: nil, queue: .main) { [weak self] _ in
-            Task { @MainActor [weak self] in
+            MainActor.assumeIsolated {
+                self?.interruptionRevision += 1
                 self?.invalidateAudioSession()
                 self?.pause()
                 self?.clearItem()
@@ -63,8 +129,10 @@ final class PlaybackController {
     }
 
     func setActive(_ active: Bool) {
+        guard active != isActive else { return }
         isActive = active
         if !active {
+            interruptionRevision += 1
             #if os(iOS) || os(tvOS)
             invalidateAudioSession()
             #endif
@@ -76,6 +144,7 @@ final class PlaybackController {
     func setInterrupted(_ value: Bool) {
         interrupted = value
         if value {
+            interruptionRevision += 1
             #if os(iOS) || os(tvOS)
             invalidateAudioSession()
             #endif
@@ -85,6 +154,7 @@ final class PlaybackController {
     }
 
     func outputDisconnected() {
+        interruptionRevision += 1
         #if os(iOS) || os(tvOS)
         invalidateAudioSession()
         #endif
@@ -97,7 +167,7 @@ final class PlaybackController {
             state.wantsToPlay = false
             return
         }
-        guard !isLoading, state.wantsToPlay else { return }
+        guard !isLoading, state.wantsToPlay, !isPresenting else { return }
         #if os(iOS) || os(tvOS)
         guard audioSessionReady else {
             activateAudioSession()
@@ -159,6 +229,7 @@ final class PlaybackController {
     }
 
     func accessFailed() {
+        interruptionRevision += 1
         pause()
         clearItem()
         needsFolderSelection = true
@@ -171,6 +242,8 @@ final class PlaybackController {
     }
 
     func setPlaylist(_ files: [URL], displayNames: [URL: String] = [:], sizes: [URL: Int64] = [:]) {
+        sessionRevision += 1
+        discardPresentations()
         clearItem()
         self.displayNames = displayNames
         self.resourceSizes = sizes
@@ -180,17 +253,18 @@ final class PlaybackController {
         error = nil
     }
 
-    func select(_ url: URL, autoplay: Bool? = nil) {
+    func select(_ url: URL, autoplay: Bool? = nil, stopOnFailure: Bool = false) {
         guard !needsFolderSelection else { return }
         let wantsToPlay = autoplay ?? (state.currentURL == nil || state.ended || state.wantsToPlay)
         guard state.select(url) else { return }
-        state.wantsToPlay = wantsToPlay
+        state.wantsToPlay = wantsToPlay && isActive && !interrupted && !isPresenting
+        selectionMustNotSkip = stopOnFailure
         error = nil
         loadCurrent()
     }
 
     func resume() {
-        guard isActive, !interrupted, !needsFolderSelection, state.currentURL != nil else { return }
+        guard isActive, !interrupted, !isPresenting, !needsFolderSelection, state.currentURL != nil else { return }
         if state.ended || player.currentItem == nil {
             let url = state.currentURL!
             select(url, autoplay: true)
@@ -208,7 +282,8 @@ final class PlaybackController {
     }
 
     func move(_ offset: Int) {
-        guard !needsFolderSelection, state.move(offset) else { return }
+        guard !isPresenting, !needsFolderSelection, state.move(offset) else { return }
+        selectionMustNotSkip = false
         error = nil
         loadCurrent()
     }
@@ -219,7 +294,7 @@ final class PlaybackController {
     }
 
     func seek(by seconds: Double) {
-        guard !isLoading, let item = player.currentItem, item.status == .readyToPlay else { return }
+        guard !isPresenting, !isLoading, let item = player.currentItem, item.status == .readyToPlay else { return }
         let current = player.currentTime().seconds
         let duration = item.duration.seconds
         guard current.isFinite, duration.isFinite, duration > 0 else { return }
@@ -279,9 +354,11 @@ final class PlaybackController {
                 let failure = notification.userInfo?[AVPlayerItemFailedToPlayToEndTimeErrorKey] as? NSError
                 let message = failure?.localizedDescription
                 let accessFailure = Self.isAccessFailure(failure)
+                let revision = MainActor.assumeIsolated { self?.presentationRevision }
                 Task { @MainActor [weak self] in
                     guard let self, self.generation == token else { return }
                     if name == AVPlayerItem.didPlayToEndTimeNotification {
+                        guard !self.isPresenting, revision == self.presentationRevision else { return }
                         if self.state.move(1) { self.loadCurrent() }
                         else {
                             self.state.finish()
@@ -303,6 +380,7 @@ final class PlaybackController {
                     self.lastAdvance = .now
                     self.isBuffering = false
                     self.state.didProgress()
+                    self.selectionMustNotSkip = false
                     self.error = nil
                 }
                 self.lastProgress = seconds
@@ -387,7 +465,13 @@ final class PlaybackController {
 
     private func handleFailure(_ message: String) {
         let name = currentName
-        let shouldContinue = state.failed()
+        let shouldContinue: Bool
+        if isPresenting || selectionMustNotSkip {
+            pause()
+            shouldContinue = false
+        } else {
+            shouldContinue = state.failed()
+        }
         error = "\(name): \(message)"
         if shouldContinue { loadCurrent() }
         else { clearItem() }

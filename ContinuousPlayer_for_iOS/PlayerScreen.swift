@@ -11,6 +11,7 @@ struct PlayerScreen: View {
     private var info: MediaInfo { playback.mediaInfo }
     @State private var outputSummary = ""
     @State private var sheet: DetailSheet?
+    @State private var infoPresentation: PlaybackController.PresentationSnapshot?
     @State private var volumeFeedbackID = 0
     @State private var showsVolume = false
     @Environment(\.scenePhase) private var scenePhase
@@ -31,14 +32,13 @@ struct PlayerScreen: View {
                 ZStack {
                     PlaybackSurface(
                         player: playback.player,
-                        onFirstAppearance: { playback.resume() },
                         keyboardEnabled: !browsingFiles && sheet == nil && scenePhase == .active && !playback.needsFolderSelection,
                         onPrevious: { playback.move(-1) },
                         onNext: { playback.move(1) },
                         onTogglePlayback: toggle,
                         onSeekBackward: { playback.seek(by: -10) },
                         onSeekForward: { playback.seek(by: 10) },
-                        onShowInfo: { sheet = .info },
+                        onShowInfo: openInfo,
                         onVolumeUp: { adjustVolume(by: 5) },
                         onVolumeDown: { adjustVolume(by: -5) },
                         onBrowseFiles: chooseFolder
@@ -47,6 +47,7 @@ struct PlayerScreen: View {
                         Image(systemName: "waveform").font(.system(size: 72)).foregroundStyle(.cyan.opacity(0.65)).accessibilityHidden(true)
                     }
                     touchControls
+                        .allowsHitTesting(!browsingFiles && sheet == nil)
                     if showsVolume {
                         Label("再生音量 \(playback.volumePercent)%", systemImage: playback.volumePercent == 0 ? "speaker.slash.fill" : "speaker.wave.2.fill")
                             .font(.headline.monospacedDigit())
@@ -93,6 +94,9 @@ struct PlayerScreen: View {
             }
         }
         .background(.black).foregroundStyle(.white).preferredColorScheme(.dark)
+        #if DEBUG
+        .overlay(alignment: .bottomLeading) { PlaybackSessionStatus(playback: playback) }
+        #endif
         #if targetEnvironment(macCatalyst)
         .background {
             CatalystPlaybackTitlebar(filename: playback.currentName,
@@ -100,14 +104,14 @@ struct PlayerScreen: View {
                                      actionsEnabled: !browsingFiles && sheet == nil,
                                      playbackEnabled: !playback.needsFolderSelection,
                                      home: home, chooseFolder: chooseFolder,
-                                     showInfo: { sheet = .info }, togglePlayback: toggle)
+                                     showInfo: openInfo, togglePlayback: toggle)
                 .allowsHitTesting(false)
         }
         #endif
         // Keep system chrome constant so safe-area changes cannot shift the video.
         .statusBarHidden(true)
         .persistentSystemOverlays(.hidden)
-        .sheet(item: $sheet) { _ in MediaInfoSheet(info: info, folderName: folderName) }
+        .sheet(item: $sheet, onDismiss: closeInfo) { _ in MediaInfoSheet(info: info, folderName: folderName) }
         .onChange(of: scenePhase, initial: true) { _, phase in
             UIApplication.shared.isIdleTimerDisabled = phase == .active
         }
@@ -157,7 +161,7 @@ struct PlayerScreen: View {
                 control("ホームに戻る", "house", action: home)
                 Spacer()
                 control("OP / EDを選び直す", "folder", action: chooseFolder)
-                control("メディア情報", "info.circle") { sheet = .info }
+                control("メディア情報", "info.circle", action: openInfo)
                 control(playback.state.wantsToPlay ? "一時停止" : "再生", playback.state.wantsToPlay ? "pause.fill" : "play.fill", action: toggle)
                     .disabled(playback.needsFolderSelection)
             }.padding(.horizontal, 8)
@@ -209,6 +213,17 @@ struct PlayerScreen: View {
         playback.adjustVolume(by: percentagePoints)
         showsVolume = true
         volumeFeedbackID += 1
+    }
+
+    private func openInfo() {
+        guard sheet == nil else { return }
+        infoPresentation = playback.beginPresentation()
+        sheet = .info
+    }
+
+    private func closeInfo() {
+        if let infoPresentation { playback.endPresentation(infoPresentation) }
+        infoPresentation = nil
     }
 
     private func toggle() {
