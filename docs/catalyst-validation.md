@@ -64,6 +64,19 @@ Mac Catalystでも、保存済み端末フォルダーを選んだ後にiPhone�
 - アプリ切り替え中の再生継続、音声デバイス切断時の停止。
 - Intel Mac実機、配布署名・公証・Mac App Store提出。
 
+## 2026-10-29 補助バンドル生成時のスクリプトSandboxエラー
+
+Xcodeの標準DerivedDataで、`MacPlaybackLifecycle.bundle/Contents` の作成が `Sandbox: mkdir ... deny file-write-create` になった。ビルドフェーズの出力にはバンドルのルートしか宣言しておらず、生成されたSandbox規則ではそのパスだけが書き込み可能だった。末尾のスラッシュだけを追加しても、この環境では解消しなかった。
+
+ビルドフェーズに配下のディレクトリ・Info.plist・実行ファイル・署名リソースを出力として宣言した。補助バンドルのコンパイルと署名は `TEMP_DIR` で行い、完成した固定ファイルだけをアプリへコピーする。スクリプトSandboxとアプリSandboxは有効のまま。
+
+- エラーが出た標準DerivedDataで、通常のDebug／自動署名ビルド成功。
+- 検証用DerivedDataの未生成Release出力先で、署名なしビルド成功。
+- 検証用Debugアプリの `codesign --verify --deep --strict` 成功。
+- 生成した補助バンドルの読み込み、ライフサイクル通知、副ボタンコールバック・監視解除の試験成功。
+
+ログ：`/tmp/continuousplayer-catalyst-xcode-build.log`、`/tmp/continuousplayer-catalyst-sandbox-build.log`、`/tmp/continuousplayer-catalyst-sandbox-release-build.log`。
+
 ## 再確認の手順
 
 1. `./script/build_and_run.sh --verify` で起動。

@@ -282,6 +282,12 @@
 			name = "Mac lifecycle bridge";
 			outputPaths = (
 				"$(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/PlugIns/MacPlaybackLifecycle.bundle",
+				"$(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/PlugIns/MacPlaybackLifecycle.bundle/Contents",
+				"$(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/PlugIns/MacPlaybackLifecycle.bundle/Contents/MacOS",
+				"$(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/PlugIns/MacPlaybackLifecycle.bundle/Contents/Info.plist",
+				"$(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/PlugIns/MacPlaybackLifecycle.bundle/Contents/MacOS/MacPlaybackLifecycle",
+				"$(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/PlugIns/MacPlaybackLifecycle.bundle/Contents/_CodeSignature",
+				"$(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/PlugIns/MacPlaybackLifecycle.bundle/Contents/_CodeSignature/CodeResources",
 			);
 			shellPath = /bin/sh;
 			shellScript = (
