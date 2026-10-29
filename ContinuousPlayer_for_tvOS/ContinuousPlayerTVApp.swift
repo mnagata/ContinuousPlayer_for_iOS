@@ -5,11 +5,8 @@ struct ContinuousPlayerTVApp: App {
     var body: some Scene {
         WindowGroup {
             #if DEBUG
-            if ProcessInfo.processInfo.arguments.contains("--common-spec-probe") {
-                CommonSpecProbeScreen()
-            } else {
-                TVHomeScreen()
-            }
+            if ProcessInfo.processInfo.arguments.contains("--common-spec-probe") { CommonSpecProbeScreen() }
+            else { TVHomeScreen() }
             #else
             TVHomeScreen()
             #endif
@@ -18,10 +15,13 @@ struct ContinuousPlayerTVApp: App {
 }
 
 private struct TVHomeScreen: View {
-    @State private var session = PlaybackSessionCoordinator()
-    @State private var showsSavedFolders = false
-    @State private var registeredFolders = RegisteredFolders()
+    var body: some View {
+        PlayerScene { select in TVHomeContent(select: select) }
+    }
+}
 
+private struct TVHomeContent: View {
+    let select: () -> Void
     var body: some View {
         VStack(spacing: 36) {
             Image("PlayerMark")
@@ -34,7 +34,7 @@ private struct TVHomeScreen: View {
                 .font(.headline).tracking(5).foregroundStyle(.cyan)
             Text("NASの動画を、OP / ED順に連続再生")
                 .foregroundStyle(.white.opacity(0.8))
-            Button("OP / EDを選ぶ") { showsSavedFolders = true }
+            Button("OP / EDを選ぶ", action: select)
                 .accessibilityIdentifier("home.chooseFolder")
                 .padding(.top, 24)
             Text("Apple TVとNASを同じネットワークに接続してください。")
@@ -44,146 +44,6 @@ private struct TVHomeScreen: View {
         .background(HomeAppearance.background.ignoresSafeArea())
         .tint(.cyan)
         .preferredColorScheme(.dark)
-        .playbackSceneLifecycle(session: session)
-        .fullScreenCover(isPresented: $showsSavedFolders) {
-            TVSavedFoldersView(registeredFolders: registeredFolders, session: session,
-                               onHome: { session.end(); showsSavedFolders = false })
-                .preferredColorScheme(.dark)
-                .tint(TVFolderColors.accent)
-                .presentationBackground(Color.black.opacity(0.78))
-        }
-    }
-}
-
-private struct TVSavedFoldersView: View {
-    let registeredFolders: RegisteredFolders
-    let session: PlaybackSessionCoordinator
-    let onHome: () -> Void
-    @Environment(\.dismiss) private var dismiss
-    @State private var browserSelection: BrowserSelection?
-    @State private var pendingRemoval: RegisteredDLNAFolder?
-    @FocusState private var focusedFolderID: String?
-    @FocusState private var isAddFocused: Bool
-
-    private struct BrowserSelection: Identifiable {
-        let id = UUID()
-        let folder: RegisteredDLNAFolder?
-    }
-
-    var body: some View {
-        NavigationStack {
-            List {
-                if registeredFolders.dlna.isEmpty {
-                    ContentUnavailableView("登録したフォルダーはありません", systemImage: "folder.badge.plus",
-                                           description: Text("「フォルダーを追加」からNASのフォルダーを登録してください。"))
-                } else {
-                    Section {
-                        ForEach(registeredFolders.dlna.sorted {
-                            $0.detail.localizedStandardCompare($1.detail) == .orderedAscending
-                        }) { folder in
-                            Button {
-                                browserSelection = BrowserSelection(folder: folder)
-                            } label: {
-                                HStack(spacing: 16) {
-                                    Image(systemName: "network")
-                                        .foregroundStyle(focusedFolderID == folder.id ? TVFolderColors.focusAccent : TVFolderColors.accent)
-                                        .frame(width: 28)
-                                    VStack(alignment: .leading, spacing: 4) {
-                                        Text(folder.name)
-                                            .foregroundStyle(focusedFolderID == folder.id ? .black : .white)
-                                            .lineLimit(3)
-                                        Text(folder.detail)
-                                            .font(.caption)
-                                            .foregroundStyle(focusedFolderID == folder.id ? Color(white: 0.25) : Color(white: 0.75))
-                                            .lineLimit(2)
-                                    }
-                                    Spacer(minLength: 0)
-                                    Image(systemName: "chevron.right")
-                                        .foregroundStyle(focusedFolderID == folder.id ? TVFolderColors.focusAccent : TVFolderColors.accent)
-                                }
-                                .frame(maxWidth: .infinity, minHeight: 56)
-                                .padding(.horizontal, 22)
-                                .padding(.vertical, 10)
-                                .background(focusedFolderID == folder.id ? TVFolderColors.selection : TVFolderColors.row,
-                                            in: RoundedRectangle(cornerRadius: 14))
-                                .contentShape(Rectangle())
-                            }
-                            .buttonStyle(.plain)
-                            .listRowBackground(Color.clear)
-                            .focused($focusedFolderID, equals: folder.id)
-                            .focusEffectDisabled()
-                            .accessibilityIdentifier("saved.dlna.\(folder.id)")
-                            .contextMenu {
-                                Button("登録解除", systemImage: "trash", role: .destructive) {
-                                    pendingRemoval = folder
-                                }
-                            }
-                        }
-                    } header: { Text("DLNAフォルダー").foregroundStyle(TVFolderColors.accent) }
-                }
-            }
-            .listStyle(.plain)
-            .background(TVFolderColors.background)
-            .safeAreaInset(edge: .bottom) {
-                VStack(spacing: 12) {
-                    Text("フォルダーを長押しすると登録を解除できます。ファイルは削除されません。")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Button {
-                        browserSelection = BrowserSelection(folder: nil)
-                    } label: {
-                        TVFolderDialogAction(title: "フォルダーを追加", systemImage: "plus.circle.fill",
-                                             isFocused: isAddFocused)
-                    }
-                    .buttonStyle(.plain)
-                    .focused($isAddFocused)
-                    .focusEffectDisabled()
-                    .accessibilityIdentifier("saved.addFolder")
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 18)
-                .background(TVFolderColors.background)
-                .overlay(alignment: .top) {
-                    Rectangle().fill(TVFolderColors.border).frame(height: 1)
-                }
-            }
-            .navigationTitle("保存済みフォルダー")
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button("閉じる") { dismiss() }
-                        .accessibilityIdentifier("saved.close")
-                }
-            }
-            .alert("登録を解除しますか？", isPresented: Binding(
-                get: { pendingRemoval != nil },
-                set: { if !$0 { pendingRemoval = nil } }
-            )) {
-                Button("登録解除", role: .destructive) {
-                    if let pendingRemoval { registeredFolders.removeDLNA(pendingRemoval) }
-                    pendingRemoval = nil
-                }
-                Button("キャンセル", role: .cancel) { pendingRemoval = nil }
-            } message: {
-                Text("保存済み一覧から外します。フォルダーやファイルは削除されません。")
-            }
-        }
-        .frame(maxWidth: 1320, maxHeight: 900)
-        .background(TVFolderColors.background)
-        .clipShape(RoundedRectangle(cornerRadius: 24))
-        .overlay {
-            RoundedRectangle(cornerRadius: 24).strokeBorder(TVFolderColors.border)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color.black.opacity(0.78))
-        .fullScreenCover(item: $browserSelection) { selection in
-            DLNABrowser(registeredFolders: registeredFolders,
-                        initialFolder: selection.folder, session: session,
-                        onHome: onHome,
-                        onRegistered: { browserSelection = nil })
-                .preferredColorScheme(.dark)
-                .tint(TVFolderColors.accent)
-                .presentationBackground(Color.black.opacity(0.78))
-        }
     }
 }
 

@@ -18,10 +18,13 @@ final class MediaLibrary {
     private(set) var currentDirectoryURL: URL?
     private let bookmarkKey: String
     private let defaults: UserDefaults
+    private let scan: (URL) async throws -> [URL]
 
-    init(defaults: UserDefaults = .standard, playback: PlaybackController? = nil) {
+    init(defaults: UserDefaults = .standard, playback: PlaybackController? = nil,
+         scan: @escaping (URL) async throws -> [URL] = MediaScanner.scan) {
         self.playback = playback ?? PlaybackController()
         self.defaults = defaults
+        self.scan = scan
         #if DEBUG
         bookmarkKey = ProcessInfo.processInfo.arguments.contains("--ui-bookmark-tests")
             ? "uitests.folder.bookmark" : "validation.folder.bookmark"
@@ -67,7 +70,7 @@ final class MediaLibrary {
         folderName = url.lastPathComponent
         do {
             if loadPlaylist {
-                files = try await MediaScanner.scan(url)
+                files = try await scan(url)
                 playback.setPlaylist(files)
             }
             if persist {
@@ -103,7 +106,7 @@ final class MediaLibrary {
         error = nil
         needsFolderPermission = false
         do {
-            _ = try await MediaScanner.scan(directory)
+            _ = try await scan(directory)
             return true
         } catch {
             self.error = "現在のフォルダーを読み込めません。USBストレージの接続とアクセス許可を確認してください。"
@@ -156,7 +159,7 @@ final class MediaLibrary {
                 throw CocoaError(.fileReadNoPermission)
             }
             #endif
-            let sorted = try await MediaScanner.scan(parent)
+            let sorted = try await scan(parent)
             guard !Task.isCancelled, playback.sessionRevision == revision else { return }
             guard let selected = sorted.first(where: {
                 $0.standardizedFileURL.resolvingSymlinksInPath() == selectedURL.standardizedFileURL.resolvingSymlinksInPath()
@@ -179,7 +182,7 @@ final class MediaLibrary {
                 : "同じフォルダーのファイルを読み込めません。\(error.localizedDescription)"
             #else
             self.error = needsFolderPermission
-                ? "ホームの「USBストレージへのアクセスを許可」で、選択したファイルのフォルダーを許可してください。"
+                ? "ファイル一覧の「保存済みフォルダー」から、選択したファイルのフォルダーを登録し直してください。"
                 : "同じフォルダーのファイルを読み込めません。\(error.localizedDescription)"
             #endif
             playback.selectionFailed(self.error!)
@@ -187,6 +190,16 @@ final class MediaLibrary {
     }
 
     func stop() { playback.setPlaylist(files) }
+
+    /// Release only the session grant; registration/bookmark persistence is separate.
+    func releasePlaybackAccess() {
+        scopedURL?.stopAccessingSecurityScopedResource()
+        scopedURL = nil
+        #if targetEnvironment(macCatalyst)
+        scopedFileURL?.stopAccessingSecurityScopedResource()
+        scopedFileURL = nil
+        #endif
+    }
 
     func forgetFolder() {
         playback.setPlaylist([])

@@ -4,7 +4,7 @@ final class Stage1PlaybackUITests: XCTestCase {
     func testSelectionCancelAndInformation() throws {
         continueAfterFailure = false
         let app = XCUIApplication()
-        app.launchArguments = ["--ui-bookmark-tests", "--ui-session-state", "--ui-dlna-direct-only",
+        app.launchArguments = ["--ui-bookmark-tests", "--ui-reset-registrations", "--ui-session-state", "--ui-dlna-direct-only",
                                "-dlna.lastServerAddress", "127.0.0.1:18767"]
         app.launch()
         defer { app.terminate() }

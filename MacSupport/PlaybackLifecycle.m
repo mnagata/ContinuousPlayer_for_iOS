@@ -5,10 +5,16 @@
 - (void)stop;
 @end
 
+@protocol CPRegistrationClickProtocol <NSObject>
+- (void)startSecondaryClickWithHandler:(BOOL (^)(double, double, double, double))handler;
+- (void)stopSecondaryClick;
+@end
+
 /// A native bundle keeps AppKit-only lifecycle APIs outside the Catalyst target.
-@interface CPPlaybackLifecycle : NSObject <CPPlaybackLifecycleProtocol>
+@interface CPPlaybackLifecycle : NSObject <CPPlaybackLifecycleProtocol, CPRegistrationClickProtocol>
 @property(copy) void (^handler)(NSString *, BOOL);
 @property NSMutableArray *tokens;
+@property id secondaryMonitor;
 @end
 
 @implementation CPPlaybackLifecycle
@@ -53,5 +59,21 @@
     self.tokens = nil;
     self.handler = nil;
 }
-- (void)dealloc { [self stop]; }
+- (void)startSecondaryClickWithHandler:(BOOL (^)(double, double, double, double))handler {
+    [self stopSecondaryClick];
+    self.secondaryMonitor = [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskRightMouseDown
+        handler:^NSEvent *(NSEvent *event) {
+            NSView *content = event.window.contentView;
+            if (!event.window.isKeyWindow || !content) return event;
+            NSPoint point = [content convertPoint:event.locationInWindow fromView:nil];
+            double y = content.isFlipped ? point.y : NSHeight(content.bounds) - point.y;
+            BOOL handled = handler(point.x, y, NSWidth(content.bounds), NSHeight(content.bounds));
+            return handled ? nil : event;
+        }];
+}
+- (void)stopSecondaryClick {
+    if (self.secondaryMonitor) [NSEvent removeMonitor:self.secondaryMonitor];
+    self.secondaryMonitor = nil;
+}
+- (void)dealloc { [self stop]; [self stopSecondaryClick]; }
 @end

@@ -15,6 +15,7 @@ struct PlayerScreen: View {
     @State private var volumeFeedbackID = 0
     @State private var showsVolume = false
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.isEnabled) private var isEnabled
     @Environment(\.accessibilityVoiceOverEnabled) private var voiceOver
     private enum DetailSheet: String, Identifiable {
         case info
@@ -32,7 +33,7 @@ struct PlayerScreen: View {
                 ZStack {
                     PlaybackSurface(
                         player: playback.player,
-                        keyboardEnabled: !browsingFiles && sheet == nil && scenePhase == .active && !playback.needsFolderSelection,
+                        keyboardEnabled: isEnabled && !browsingFiles && sheet == nil && scenePhase == .active && !playback.needsFolderSelection,
                         onPrevious: { playback.move(-1) },
                         onNext: { playback.move(1) },
                         onTogglePlayback: toggle,
@@ -101,7 +102,7 @@ struct PlayerScreen: View {
         .background {
             CatalystPlaybackTitlebar(filename: playback.currentName,
                                      isPlaying: playback.state.wantsToPlay,
-                                     actionsEnabled: !browsingFiles && sheet == nil,
+                                     actionsEnabled: isEnabled && !browsingFiles && sheet == nil,
                                      playbackEnabled: !playback.needsFolderSelection,
                                      home: home, chooseFolder: chooseFolder,
                                      showInfo: openInfo, togglePlayback: toggle)

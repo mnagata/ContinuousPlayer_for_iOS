@@ -5,6 +5,11 @@
 - (void)stop;
 @end
 
+@protocol CPRegistrationClickProtocol <NSObject>
+- (void)startSecondaryClickWithHandler:(BOOL (^)(double, double, double, double))handler;
+- (void)stopSecondaryClick;
+@end
+
 int main(int argc, const char *argv[]) {
     @autoreleasepool {
         NSCAssert(argc == 2, @"Pass the built native bundle path");
@@ -31,6 +36,13 @@ int main(int argc, const char *argv[]) {
         [bridge stop];
         [workspace postNotificationName:NSWorkspaceWillSleepNotification object:nil];
         NSCAssert(events.count == 8, @"Stop removes observers");
+        id<CPRegistrationClickProtocol> input = [[type alloc] init];
+        NSCAssert([input conformsToProtocol:@protocol(CPRegistrationClickProtocol)], @"Secondary click boundary conforms");
+        [input startSecondaryClickWithHandler:^BOOL(double x, double y, double width, double height) { return NO; }];
+        [input startSecondaryClickWithHandler:^BOOL(double x, double y, double width, double height) { return NO; }];
+        [input stopSecondaryClick];
+        [input stopSecondaryClick];
+        puts("PASS: secondary-click typed boundary, monitor replacement and cleanup");
         puts("PASS: native bundle loading, typed boundary, sleep/display/session/hide notifications, observer cleanup (synthetic events)");
     }
     return 0;

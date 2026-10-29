@@ -43,7 +43,6 @@
 				ContentView.swift,
 				ContinuousPlayer_for_iOSApp.swift,
 				LaunchScreen.storyboard,
-				MediaFileBrowser.swift,
 				MediaLibrary.swift,
 				MediaValidationSession.swift,
 				PlaybackSurface.swift,

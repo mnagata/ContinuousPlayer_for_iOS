@@ -4,13 +4,14 @@ final class Stage1TVPlaybackUITests: XCTestCase {
     func testBackOnceCancelResumeAndSelection() throws {
         continueAfterFailure = false
         let app = XCUIApplication()
-        app.launchArguments = ["--ui-bookmark-tests", "--ui-session-state",
+        app.launchArguments = ["--ui-bookmark-tests", "--ui-reset-registrations", "--ui-session-state",
                                "-dlna.lastServerAddress", "127.0.0.1:18765"]
         app.launch()
         defer { app.terminate() }
         XCTAssertTrue(app.buttons["home.chooseFolder"].waitForExistence(timeout: 10))
         XCUIRemote.shared.press(.select)
         activate(app.buttons["saved.addFolder"])
+        activate(app.buttons["saved.source.dlna"])
         activate(app.buttons["Fixture NAS"])
         let register = app.buttons["dlna.registerFolder"]
         XCTAssertTrue(register.waitForExistence(timeout: 15))
@@ -30,7 +31,7 @@ final class Stage1TVPlaybackUITests: XCTestCase {
         XCUIRemote.shared.press(.home)
         XCTAssertTrue(app.wait(for: .runningBackground, timeout: 10))
         reopenFromTVHome(app)
-        XCUIRemote.shared.press(.menu)
+        activate(app.buttons["dlna.cancel"])
         assertState(app, "作品 OP.mp4|paused|")
         XCUIRemote.shared.press(.playPause)
         assertState(app, "作品 OP.mp4|playing|")
@@ -69,7 +70,7 @@ final class Stage1TVPlaybackUITests: XCTestCase {
         XCTAssertTrue(exists)
         if !isFocused(element) {
             for _ in 0..<30 {
-                let current = XCUIApplication().buttons.allElementsBoundByIndex.first(where: isFocused)
+                let current = (XCUIApplication().buttons.allElementsBoundByIndex + XCUIApplication().textFields.allElementsBoundByIndex).first(where: isFocused)
                 if let current {
                     let dx = element.frame.midX - current.frame.midX
                     let dy = element.frame.midY - current.frame.midY

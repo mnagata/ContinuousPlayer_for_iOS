@@ -21,7 +21,8 @@ final class DLNAUITests: XCTestCase {
         #endif
         continueAfterFailure = false
         let app = XCUIApplication()
-        app.launchArguments = ["--ui-dlna-direct-only"]
+        app.launchArguments = ["--ui-bookmark-tests", "--ui-reset-registrations", "--ui-dlna-direct-only",
+                               "-dlna.lastServerAddress", "http://127.0.0.1:18765/folders.xml"]
         app.launch()
         defer { app.terminate() }
 
@@ -32,17 +33,8 @@ final class DLNAUITests: XCTestCase {
             let allow = springboard.alerts.buttons.matching(NSPredicate(format: "label IN %@", ["Allow", "許可", "OK"])).firstMatch
             if allow.exists { allow.tap() }
         }
-        let forget = app.buttons["保存した接続先を削除"]
-        if forget.exists {
-            let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: forget)
-            XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 20), .completed)
-            forget.tap()
-        }
-        let address = app.textFields["dlna.serverAddress"]
-        XCTAssertTrue(address.waitForExistence(timeout: 5))
-        address.tap()
-        address.typeText("http://127.0.0.1:18765/folders.xml")
-        app.buttons["dlna.connect"].tap()
+        // This case tests folder registration. Seed the server independently of
+        // keyboard timing and the previous run's saved connection.
         let server = app.buttons["Fixture NAS"]
         XCTAssertTrue(server.waitForExistence(timeout: 15))
         server.tap()
@@ -55,12 +47,6 @@ final class DLNAUITests: XCTestCase {
         let register = app.buttons["dlna.registerFolder"]
         XCTAssertTrue(register.waitForExistence(timeout: 15))
         XCTAssertTrue(register.isEnabled)
-        if register.label.contains("登録解除") {
-            register.tap()
-            let ready = XCTNSPredicateExpectation(
-                predicate: NSPredicate(format: "label CONTAINS %@", "このフォルダーを登録"), object: register)
-            XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 5), .completed)
-        }
         register.tap()
         XCTAssertTrue(app.navigationBars["保存済みフォルダー"].waitForExistence(timeout: 10))
         XCTAssertTrue(app.staticTexts["Child 00"].waitForExistence(timeout: 10))
@@ -78,22 +64,17 @@ final class DLNAUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["最後まで再生しました"].waitForExistence(timeout: 20))
         app.buttons["OP / EDを選び直す"].tap()
         XCTAssertTrue(file.waitForExistence(timeout: 10), "Open the currently playing folder")
-        let parent = app.navigationBars["Child 00"].buttons["Folder 00"]
-        XCTAssertTrue(parent.waitForExistence(timeout: 5), "The overlay must include the parent folder")
-        parent.tap()
-        XCTAssertTrue(child.waitForExistence(timeout: 10))
-        let root = app.navigationBars["Folder 00"].buttons["Fixture NAS"]
-        XCTAssertTrue(root.waitForExistence(timeout: 5), "Retain all ancestors up to the server root")
-        root.tap()
-        XCTAssertTrue(folder.waitForExistence(timeout: 10))
-        folder.tap()
-        XCTAssertTrue(child.waitForExistence(timeout: 10))
-        child.tap()
-        XCTAssertTrue(file.waitForExistence(timeout: 10))
+        XCTAssertEqual(app.buttons["selection.back"].label, "保存済みフォルダー")
+        app.buttons["selection.back"].tap()
+        XCTAssertTrue(saved.waitForExistence(timeout: 10), "Registration root returns to saved folders")
+        XCTAssertFalse(folder.exists, "Do not expose ancestors above the registered root")
+        saved.tap()
+        XCTAssertTrue(file.waitForExistence(timeout: 15))
         app.buttons["dlna.cancel"].tap()
         XCTAssertTrue(app.buttons["ホームに戻る"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["作品 ED.mp4"].firstMatch.exists, "Cancel keeps the paused video")
 
+        app.launchArguments.removeAll { $0 == "--ui-reset-registrations" }
         app.terminate()
         app.launch()
         app.buttons["home.select"].tap()
@@ -111,7 +92,8 @@ final class DLNAUITests: XCTestCase {
         #endif
         continueAfterFailure = false
         let app = XCUIApplication()
-        app.launchArguments = ["--ui-dlna-direct-only"]
+        app.launchArguments = ["--ui-bookmark-tests", "--ui-reset-registrations", "--ui-dlna-direct-only",
+                               "-dlna.lastServerAddress", ""]
         app.launch()
         defer { app.terminate() }
         openAddDLNA(app)
@@ -153,6 +135,11 @@ final class DLNAUITests: XCTestCase {
         let server = app.buttons["Fixture NAS"]
         XCTAssertTrue(server.waitForExistence(timeout: 15))
         server.tap()
+        let register = app.buttons["dlna.registerFolder"]
+        XCTAssertTrue(register.waitForExistence(timeout: 15))
+        register.tap()
+        let saved = app.buttons["saved.dlna.uuid:fixture\u{0}0"]
+        XCTAssertTrue(saved.waitForExistence(timeout: 10)); saved.tap()
         let file = app.buttons["作品 OP.mp4から連続再生"]
         XCTAssertTrue(file.waitForExistence(timeout: 15))
         let listing = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
@@ -172,6 +159,8 @@ final class DLNAUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["最後まで再生しました"].waitForExistence(timeout: 20))
         app.buttons["ホームに戻る"].tap()
         XCTAssertTrue(app.buttons["home.select"].waitForExistence(timeout: 5))
+        app.launchArguments.removeAll { $0 == "--ui-reset-registrations" }
+        app.launchArguments.removeLast(2) // Let the saved address drive reconnection after relaunch.
         app.terminate()
         app.launch()
         openAddDLNA(app)

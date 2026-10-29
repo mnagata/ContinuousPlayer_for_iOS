@@ -3,15 +3,16 @@ import UIKit
 import OSLog
 
 extension View {
-    func playbackSceneLifecycle(session: PlaybackSessionCoordinator) -> some View {
-        modifier(PlaybackSceneLifecycle(session: session))
+    func playbackSceneLifecycle(session: PlaybackSessionCoordinator, onEnd: (() -> Void)? = nil) -> some View {
+        modifier(PlaybackSceneLifecycle(session: session, onEnd: onEnd))
     }
 }
 
 private struct PlaybackSceneLifecycle: ViewModifier {
     let session: PlaybackSessionCoordinator
+    let onEnd: (() -> Void)?
     func body(content: Content) -> some View {
-        content.background(PlaybackSceneObserver(session: session).frame(width: 0, height: 0))
+        content.background(PlaybackSceneObserver(session: session, onEnd: onEnd).frame(width: 0, height: 0))
     }
 }
 
@@ -26,9 +27,12 @@ protocol PlaybackMacLifecycle: NSObjectProtocol {
 
 private struct PlaybackSceneObserver: UIViewControllerRepresentable {
     let session: PlaybackSessionCoordinator
+    let onEnd: (() -> Void)?
 
     final class Controller: UIViewController {
         var session: PlaybackSessionCoordinator?
+        var onEnd: (() -> Void)?
+        func end() { if let onEnd { onEnd() } else { session?.end() } }
         private var observers: [NSObjectProtocol] = []
         private weak var observedScene: UIWindowScene?
         #if targetEnvironment(macCatalyst)
@@ -71,17 +75,19 @@ private struct PlaybackSceneObserver: UIViewControllerRepresentable {
             observers.append(center.addObserver(forName: UIScene.didEnterBackgroundNotification, object: scene, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated { self?.session?.setSceneAllowsPlayback(false) }
             })
+            #if !targetEnvironment(macCatalyst)
             if !keepsInactive {
                 observers.append(center.addObserver(forName: UIScene.willDeactivateNotification, object: scene, queue: .main) { [weak self] _ in
                     MainActor.assumeIsolated { self?.session?.setSceneAllowsPlayback(false) }
                 })
             }
             #endif
+            #endif
             observers.append(center.addObserver(forName: UIScene.didDisconnectNotification, object: scene, queue: .main) { [weak self] _ in
-                MainActor.assumeIsolated { self?.session?.end() }
+                MainActor.assumeIsolated { self?.end() }
             })
             observers.append(center.addObserver(forName: UIApplication.willTerminateNotification, object: nil, queue: .main) { [weak self] _ in
-                MainActor.assumeIsolated { self?.session?.end() }
+                MainActor.assumeIsolated { self?.end() }
             })
             observers.append(center.addObserver(forName: UIApplication.protectedDataWillBecomeUnavailableNotification, object: nil, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated { self?.session?.setBlocked("protected-data", true) }
@@ -117,7 +123,8 @@ private struct PlaybackSceneObserver: UIViewControllerRepresentable {
     func makeUIViewController(context: Context) -> Controller {
         let controller = Controller()
         controller.session = session
+        controller.onEnd = onEnd
         return controller
     }
-    func updateUIViewController(_ controller: Controller, context: Context) { controller.session = session }
+    func updateUIViewController(_ controller: Controller, context: Context) { controller.session = session; controller.onEnd = onEnd }
 }

@@ -14,6 +14,10 @@ final class TVPlaybackUITests: XCTestCase {
         XCTAssertTrue(addFolder.waitForExistence(timeout: 10))
         try focus(addFolder)
         XCUIRemote.shared.press(.select)
+        let source = app.buttons["saved.source.dlna"]
+        XCTAssertTrue(source.waitForExistence(timeout: 10))
+        try focus(source)
+        XCUIRemote.shared.press(.select)
         let server = app.buttons["Fixture NAS"]
         XCTAssertTrue(server.waitForExistence(timeout: 20))
         let settingsShot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
@@ -70,6 +74,10 @@ final class TVPlaybackUITests: XCTestCase {
         let addFolder = app.buttons["saved.addFolder"]
         XCTAssertTrue(addFolder.waitForExistence(timeout: 10))
         try focus(addFolder)
+        XCUIRemote.shared.press(.select)
+        let source = app.buttons["saved.source.dlna"]
+        XCTAssertTrue(source.waitForExistence(timeout: 10))
+        try focus(source)
         XCUIRemote.shared.press(.select)
         let server = app.buttons["Fixture NAS"]
         XCTAssertTrue(server.waitForExistence(timeout: 20))

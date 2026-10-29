@@ -73,9 +73,10 @@ struct CatalystPlaybackTitlebar: UIViewControllerRepresentable {
             for item in playbackToolbar.items { configure(item) }
         }
 
-        func restoreTitlebar() {
+        func restoreTitlebar(restoringHome: Bool = false) {
             if let scene {
-                if scene.title == appliedTitle { scene.title = previousTitle }
+                if restoringHome { scene.title = "ContinuousPlayer" }
+                else if scene.title == appliedTitle { scene.title = previousTitle }
                 if let titlebar = scene.titlebar, titlebar.toolbar === playbackToolbar {
                     titlebar.toolbar = previousToolbar
                     titlebar.toolbarStyle = previousStyle
@@ -169,7 +170,7 @@ struct CatalystPlaybackTitlebar: UIViewControllerRepresentable {
     }
 
     static func dismantleUIViewController(_ controller: Controller, coordinator: ()) {
-        controller.restoreTitlebar()
+        controller.restoreTitlebar(restoringHome: true)
         controller.configuration = nil
     }
 }

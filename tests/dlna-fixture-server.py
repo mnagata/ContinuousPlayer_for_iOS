@@ -46,6 +46,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.do_GET()
 
     def do_GET(self):
+        if urlparse(self.path).path == '/test/delay-next':
+            self.server.next_delay = min(8, max(0, float(parse_qs(urlparse(self.path).query).get('seconds', ['0'])[0])))
+            self.reply(b'OK', mime='text/plain')
+            return
         if urlparse(self.path).path in ('/description.xml', '/desc/device.xml', '/folders.xml'):
             text = '<root xmlns="urn:schemas-upnp-org:device-1-0"><device><deviceType>urn:schemas-upnp-org:device:MediaServer:1</deviceType><friendlyName>Fixture NAS</friendlyName><UDN>uuid:fixture</UDN><serviceList><service><serviceType>urn:schemas-upnp-org:service:ContentDirectory:1</serviceType><controlURL>/control</controlURL></service></serviceList></device></root>'
             if urlparse(self.path).path == '/folders.xml':
@@ -78,6 +82,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
         assert self.headers['SOAPAction'] == '"urn:schemas-upnp-org:service:ContentDirectory:1#Browse"'
         root = ET.fromstring(body)
         fields = {node.tag.split('}')[-1]: node.text for node in root.iter()}
+        delay = getattr(self.server, 'next_delay', 0)
+        self.server.next_delay = 0
+        if delay:
+            time.sleep(delay)
         identifier = fields['ObjectID']
         start = int(fields['StartingIndex'])
         assert fields['BrowseFlag'] == 'BrowseDirectChildren'

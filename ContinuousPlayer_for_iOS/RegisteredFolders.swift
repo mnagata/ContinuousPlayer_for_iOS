@@ -41,6 +41,13 @@ final class RegisteredFolders {
         #endif
         localKey = prefix + "registered.localFolders.v1"
         dlnaKey = prefix + "registered.dlnaFolders.v1"
+        #if DEBUG
+        if !prefix.isEmpty && ProcessInfo.processInfo.arguments.contains("--ui-reset-registrations") {
+            defaults.removeObject(forKey: localKey)
+            defaults.removeObject(forKey: dlnaKey)
+            defaults.removeObject(forKey: "uitests.folder.bookmark")
+        }
+        #endif
         if let data = defaults.data(forKey: localKey) {
             local = (try? JSONDecoder().decode([RegisteredLocalFolder].self, from: data)) ?? []
         } else {
@@ -56,19 +63,26 @@ final class RegisteredFolders {
         }
     }
 
-    func addLocal(_ url: URL) throws {
+    @discardableResult
+    func addLocal(_ url: URL) throws -> RegisteredLocalFolder {
+        let accessing = url.startAccessingSecurityScopedResource()
+        defer { if accessing { url.stopAccessingSecurityScopedResource() } }
         #if targetEnvironment(macCatalyst)
         let options: URL.BookmarkCreationOptions = [.withSecurityScope, .securityScopeAllowOnlyReadAccess]
         #else
         let options: URL.BookmarkCreationOptions = .minimalBookmark
         #endif
         let bookmark = try url.bookmarkData(options: options, includingResourceValuesForKeys: nil, relativeTo: nil)
+        let folder: RegisteredLocalFolder
         if let index = local.firstIndex(where: { (try? Self.resolve($0.bookmark).standardizedFileURL) == url.standardizedFileURL }) {
-            local[index] = RegisteredLocalFolder(id: local[index].id, name: url.lastPathComponent, bookmark: bookmark)
+            folder = RegisteredLocalFolder(id: local[index].id, name: url.lastPathComponent, bookmark: bookmark)
+            local[index] = folder
         } else {
-            local.append(RegisteredLocalFolder(id: UUID(), name: url.lastPathComponent, bookmark: bookmark))
+            folder = RegisteredLocalFolder(id: UUID(), name: url.lastPathComponent, bookmark: bookmark)
+            local.append(folder)
         }
         persistLocal()
+        return folder
     }
 
     func resolve(_ folder: RegisteredLocalFolder) throws -> URL { try Self.resolve(folder.bookmark) }
@@ -82,16 +96,14 @@ final class RegisteredFolders {
         dlna.contains { $0.serverID == server.id && $0.path.last?.id == objectID }
     }
 
-    func toggleDLNA(server: DLNAServer, path: [RegisteredDLNAPath]) {
-        guard let last = path.last else { return }
-        let id = server.id + "\u{0}" + last.id
-        if dlna.contains(where: { $0.id == id }) {
-            dlna.removeAll { $0.id == id }
-        } else {
-            dlna.append(RegisteredDLNAFolder(serverID: server.id, serverName: server.name,
-                                             descriptionURL: server.descriptionURL, path: path))
-        }
+    @discardableResult
+    func addDLNA(server: DLNAServer, path: [RegisteredDLNAPath]) -> RegisteredDLNAFolder {
+        let folder = RegisteredDLNAFolder(serverID: server.id, serverName: server.name,
+                                          descriptionURL: server.descriptionURL, path: path)
+        if let index = dlna.firstIndex(where: { $0.id == folder.id }) { dlna[index] = folder }
+        else { dlna.append(folder) }
         persistDLNA()
+        return folder
     }
 
     func removeDLNA(_ folder: RegisteredDLNAFolder) {
