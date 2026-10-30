@@ -49,6 +49,24 @@ final class PlayerSceneModel {
         if let snapshot { playback.endPresentation(snapshot) }
         snapshot = nil
     }
+    func retryPlayback() {
+        guard playback.canRetry, playback.failure != nil else { return }
+        #if !os(tvOS)
+        if case .local(let root, _) = source {
+            let resolved = registrations.local.compactMap { try? registrations.resolve($0) }
+                .first { $0.standardizedFileURL == root.standardizedFileURL } ?? root
+            if library.error != nil, playback.failure?.seconds == 0, let chosenRow, let source {
+                // Initial enumeration failed before a queue existed. Repeat that
+                // enumeration only after the user's explicit retry.
+                commit(MediaSelection(folder: source, rows: playbackRows, selected: chosenRow,
+                                      access: BrowsingFolderAccess(resolved)))
+                return
+            }
+            library.renewPlaybackAccess(to: resolved)
+        }
+        #endif
+        playback.retry()
+    }
     func home() {
         preparationRevision += 1; preparation?.cancel()
         selection?.finish(); selection = nil; snapshot = nil
@@ -88,7 +106,11 @@ final class PlayerSceneModel {
                 await self.library.open(root, loadPlaylist: false)
                 withExtendedLifetime(grant) {}
                 guard !Task.isCancelled, self.preparationRevision == token else { return }
-                if let error = self.library.error { self.playback.stageSelection(url); self.playback.selectionFailed(error); return }
+                if let error = self.library.error {
+                    self.playback.stageSelection(url)
+                    self.playback.selectionFailed(error, accessFailure: self.library.needsFolderPermission)
+                    return
+                }
                 await self.library.playFromSelection(url, autoplay: self.playback.interruptionRevision == interruption)
             }
             #endif

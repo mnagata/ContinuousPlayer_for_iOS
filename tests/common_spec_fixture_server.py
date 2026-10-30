@@ -72,7 +72,12 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         path = urlsplit(self.path).path
-        if path in ('/description.xml', '/desc/device.xml', '/slow-description.xml'):
+        if path in ('/test/restore-missing', '/test/reset-missing'):
+            self.server.missing_restored = path == '/test/restore-missing'
+            self.reply(b'ok', mime='text/plain')
+        elif path == '/media/missing.mp4' and getattr(self.server, 'missing_restored', False):
+            self.serve_media('/media/op.mp4')
+        elif path in ('/description.xml', '/desc/device.xml', '/slow-description.xml'):
             if path == '/slow-description.xml':
                 time.sleep(self.server.config.delay)
             description = ('<root xmlns="urn:schemas-upnp-org:device-1-0"><device>'

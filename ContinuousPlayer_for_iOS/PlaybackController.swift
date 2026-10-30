@@ -7,7 +7,9 @@ final class PlaybackController {
     private(set) var player = AVPlayer()
     private(set) var state = PlaybackState()
     private(set) var volumePercent = 100
-    private(set) var error: String?
+    private(set) var failure: PlaybackFailure?
+    private(set) var showsFailure = false
+    var error: String? { failure?.message }
     private(set) var isLoading = false
     private(set) var mediaInfo = MediaInfo()
     private var displayNames: [URL: String] = [:]
@@ -15,6 +17,8 @@ final class PlaybackController {
     private var preparation: Task<Void, Never>?
     private let logger = Logger(subsystem: "jp.nagu.ContinuousPlayer-for-iOS", category: "PlaybackStartup")
     private var statusObservation: NSKeyValueObservation?
+    private var rangeObservation: NSKeyValueObservation?
+    private var durationObservation: NSKeyValueObservation?
     private var notifications: [NSObjectProtocol] = []
     private var progressObserver: Any?
     private var timeout: Task<Void, Never>?
@@ -29,7 +33,17 @@ final class PlaybackController {
     private(set) var sessionRevision = 0
     private var presentationRevision = 0
     private var presentations: [UUID: PresentationSnapshot] = [:]
-    private var selectionMustNotSkip = false
+    private(set) var confirmedSeconds = 0.0
+    private(set) var seekableRanges: [ClosedRange<Double>] = []
+    private(set) var duration: Double?
+    private(set) var isSeeking = false
+    private var seekRevision = 0
+    private var seekTask: Task<Void, Never>?
+    private let preparationLimit: Duration
+    private let performSeek: (AVPlayer, CMTime) async -> Bool
+    var canSeek: Bool { !isPresenting && !isLoading && failure == nil && !seekableRanges.isEmpty }
+    var canRetry: Bool { state.currentURL != nil && !isLoading && !isPresenting && isActive && !interrupted }
+    var canResume: Bool { state.currentURL != nil && !isPresenting && isActive && !interrupted && (!needsFolderSelection || failure != nil) }
 
     struct PresentationSnapshot {
         let id: UUID
@@ -76,7 +90,7 @@ final class PlaybackController {
     /// Commit a user selection. Failure must remain attached to this selection.
     func commitSelection(_ url: URL, autoplay: Bool = true) {
         discardPresentations()
-        select(url, autoplay: autoplay && isActive && !interrupted, stopOnFailure: true)
+        select(url, autoplay: autoplay && isActive && !interrupted)
     }
 
     func stageSelection(_ url: URL) {
@@ -85,10 +99,8 @@ final class PlaybackController {
         state.wantsToPlay = false
     }
 
-    func selectionFailed(_ message: String) {
-        pause()
-        clearItem()
-        error = message
+    func selectionFailed(_ message: String, accessFailure: Bool = false) {
+        recordFailure(message, recovery: accessFailure ? .localAccess : nil)
     }
     #if os(iOS) || os(tvOS)
     private var audioSessionReady = false
@@ -102,7 +114,12 @@ final class PlaybackController {
         state.currentURL != nil && !state.wantsToPlay && !state.ended && !needsFolderSelection
     }
 
-    init() {
+    init(preparationLimit: Duration = .seconds(30),
+         seek: @escaping (AVPlayer, CMTime) async -> Bool = {
+             await $0.seek(to: $1, toleranceBefore: .zero, toleranceAfter: .zero)
+         }) {
+        self.preparationLimit = preparationLimit
+        self.performSeek = seek
         #if os(iOS) || os(tvOS)
         let center = NotificationCenter.default
         systemNotifications.append(center.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: .main) { [weak self] notification in
@@ -167,7 +184,7 @@ final class PlaybackController {
             state.wantsToPlay = false
             return
         }
-        guard !isLoading, state.wantsToPlay, !isPresenting else { return }
+        guard !isLoading, state.wantsToPlay, !isPresenting, failure == nil else { return }
         #if os(iOS) || os(tvOS)
         guard audioSessionReady else {
             activateAudioSession()
@@ -209,8 +226,7 @@ final class PlaybackController {
                 self.startPlayback()
             case .failure(let error):
                 guard self.state.wantsToPlay else { return }
-                self.pause()
-                self.error = "音声出力を開始できません: \(error.localizedDescription)"
+                self.recordFailure("音声出力を開始できません: \(error.localizedDescription)", recovery: .audioOutput)
             }
         }
     }
@@ -230,10 +246,7 @@ final class PlaybackController {
 
     func accessFailed() {
         interruptionRevision += 1
-        pause()
-        clearItem()
-        needsFolderSelection = true
-        error = "フォルダーへのアクセスが失われました。フォルダーを再選択してください。"
+        recordFailure("フォルダーへのアクセスが失われました。フォルダーを再選択してください。", recovery: .localAccess)
     }
 
     var currentName: String {
@@ -250,20 +263,20 @@ final class PlaybackController {
         state.replace(files)
         needsFolderSelection = false
         pauseReason = nil
-        error = nil
+        failure = nil; showsFailure = false; confirmedSeconds = 0
     }
 
-    func select(_ url: URL, autoplay: Bool? = nil, stopOnFailure: Bool = false) {
+    func select(_ url: URL, autoplay: Bool? = nil) {
         guard !needsFolderSelection else { return }
         let wantsToPlay = autoplay ?? (state.currentURL == nil || state.ended || state.wantsToPlay)
         guard state.select(url) else { return }
         state.wantsToPlay = wantsToPlay && isActive && !interrupted && !isPresenting
-        selectionMustNotSkip = stopOnFailure
-        error = nil
+        failure = nil; showsFailure = false; confirmedSeconds = 0
         loadCurrent()
     }
 
     func resume() {
+        if failure != nil { retry(); return }
         guard isActive, !interrupted, !isPresenting, !needsFolderSelection, state.currentURL != nil else { return }
         if state.ended || player.currentItem == nil {
             let url = state.currentURL!
@@ -275,6 +288,7 @@ final class PlaybackController {
     }
 
     func pause() {
+        confirmPosition()
         state.wantsToPlay = false
         // Preparation already keeps rate at zero; do not interrupt its preroll.
         if !isLoading { player.pause() }
@@ -283,8 +297,26 @@ final class PlaybackController {
 
     func move(_ offset: Int) {
         guard !isPresenting, !needsFolderSelection, state.move(offset) else { return }
-        selectionMustNotSkip = false
-        error = nil
+        failure = nil; showsFailure = false; confirmedSeconds = 0
+        loadCurrent()
+    }
+
+    func dismissFailure() { showsFailure = false }
+
+    /// Explicit recovery preserves the queue and last confirmed position. Merely
+    /// restoring a grant, returning to foreground or closing UI never calls this.
+    func retry() {
+        guard canRetry, let failure, failure.url == state.currentURL else { return }
+        let seconds = failure.seconds
+        self.failure = nil; showsFailure = false; needsFolderSelection = false
+        state.wantsToPlay = true
+        loadCurrent(resumingAt: seconds)
+    }
+
+    func nextAfterFailure() {
+        guard failure != nil, !isPresenting, state.move(1) else { return }
+        failure = nil; showsFailure = false; needsFolderSelection = false; confirmedSeconds = 0
+        state.wantsToPlay = isActive && !interrupted
         loadCurrent()
     }
 
@@ -294,29 +326,64 @@ final class PlaybackController {
     }
 
     func seek(by seconds: Double) {
-        guard !isPresenting, !isLoading, let item = player.currentItem, item.status == .readyToPlay else { return }
+        guard canSeek, let item = player.currentItem, item.status == .readyToPlay else { return }
+        refreshSeekability(item)
         let current = player.currentTime().seconds
-        let duration = item.duration.seconds
-        guard current.isFinite, duration.isFinite, duration > 0 else { return }
-        let target = max(0, current + seconds)
-        if target >= duration {
+        switch PlaybackSeekPolicy.action(current: current, by: seconds, duration: duration,
+                                         ranges: seekableRanges, hasNext: state.canGoForward) {
+        case .none: return
+        case .next:
             move(1)
-        } else {
-            player.seek(to: CMTime(seconds: target, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
+        case .position(let target):
+            confirmPosition()
+            seekRevision += 1
+            let revision = seekRevision
+            let token = generation
+            isSeeking = true
+            seekTask?.cancel()
+            seekTask = Task { [weak self] in
+                guard let self else { return }
+                let finished = await self.performSeek(self.player, CMTime(seconds: target, preferredTimescale: 600))
+                guard !Task.isCancelled, self.generation == token, self.seekRevision == revision else { return }
+                self.isSeeking = false; self.seekTask = nil
+                if finished { self.confirmPosition() }
+                self.lastAdvance = .now
+            }
         }
     }
 
-    private func clearItem() {
+    private func confirmPosition() {
+        guard !isSeeking, !isLoading, failure == nil, player.currentItem?.status == .readyToPlay else { return }
+        let seconds = player.currentTime().seconds
+        if seconds.isFinite, seconds >= 0 { confirmedSeconds = seconds }
+    }
+
+    private func refreshSeekability(_ item: AVPlayerItem) {
+        let seconds = item.duration.seconds
+        duration = seconds.isFinite && seconds > 0 ? seconds : nil
+        seekableRanges = PlaybackSeekPolicy.validRanges(item.seekableTimeRanges.compactMap {
+            let range = $0.timeRangeValue
+            let start = range.start.seconds, end = CMTimeRangeGetEnd(range).seconds
+            guard start.isFinite, end.isFinite, start <= end else { return nil }
+            return start...end
+        })
+    }
+
+    private func clearItem(preservingInfo: Bool = false) {
         generation += 1
+        seekRevision += 1; seekTask?.cancel(); seekTask = nil; isSeeking = false
+        seekableRanges = []; duration = nil
         preparation?.cancel()
         preparation = nil
         player.cancelPendingPrerolls()
+        player.currentItem?.cancelPendingSeeks()
         watchdog?.cancel()
         watchdog = nil
         isBuffering = false
         timeout?.cancel()
         timeout = nil
         statusObservation = nil
+        rangeObservation = nil; durationObservation = nil
         notifications.forEach { NotificationCenter.default.removeObserver($0) }
         notifications.removeAll()
         if let progressObserver { player.removeTimeObserver(progressObserver) }
@@ -324,11 +391,12 @@ final class PlaybackController {
         player.pause()
         player.replaceCurrentItem(with: nil)
         isLoading = false
-        mediaInfo = MediaInfo()
+        if !preservingInfo { mediaInfo = MediaInfo() }
     }
 
-    private func loadCurrent() {
+    private func loadCurrent(resumingAt seconds: Double = 0) {
         clearItem()
+        confirmedSeconds = seconds
         guard let url = state.currentURL else { return }
         let item = AVPlayerItem(url: url)
         let token = generation
@@ -341,10 +409,10 @@ final class PlaybackController {
                 guard let self, self.generation == token else { return }
                 switch item.status {
                 case .readyToPlay:
-                    self.prepareCurrent(item, url: url, token: token)
+                    self.prepareCurrent(item, url: url, token: token, resumingAt: seconds)
                 case .failed:
                     if url.isFileURL && Self.isAccessFailure(item.error) { self.accessFailed() }
-                    else { self.handleFailure(item.error?.localizedDescription ?? "読み込めないファイルです。") }
+                    else { self.recordFailure(item.error?.localizedDescription ?? "読み込めないファイルです。") }
                 default: break
                 }
             }
@@ -367,11 +435,23 @@ final class PlaybackController {
                             self.player.pause()
                         }
                     } else if url.isFileURL && accessFailure { self.accessFailed() }
-                    else { self.handleFailure(message ?? "再生中にエラーが発生しました。") }
+                    else { self.recordFailure(message ?? "再生中にエラーが発生しました。") }
                 }
             })
         }
         player.replaceCurrentItem(with: item)
+        rangeObservation = item.observe(\.seekableTimeRanges, options: [.initial, .new]) { [weak self] item, _ in
+            Task { @MainActor [weak self] in
+                guard let self, self.generation == token else { return }
+                self.refreshSeekability(item)
+            }
+        }
+        durationObservation = item.observe(\.duration, options: [.new]) { [weak self] item, _ in
+            Task { @MainActor [weak self] in
+                guard let self, self.generation == token else { return }
+                self.refreshSeekability(item)
+            }
+        }
         progressObserver = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.5, preferredTimescale: 600), queue: .main) { [weak self] time in
             MainActor.assumeIsolated {
                 guard let self, self.generation == token else { return }
@@ -379,17 +459,16 @@ final class PlaybackController {
                 if seconds.isFinite, seconds > self.lastProgress, self.player.rate > 0 {
                     self.lastAdvance = .now
                     self.isBuffering = false
-                    self.state.didProgress()
-                    self.selectionMustNotSkip = false
-                    self.error = nil
                 }
+                self.confirmPosition()
+                self.refreshSeekability(item)
                 self.lastProgress = seconds
             }
         }
         timeout = Task { [weak self] in
-            do { try await Task.sleep(for: .seconds(30)) } catch { return }
+            do { try await Task.sleep(for: self?.preparationLimit ?? .seconds(30)) } catch { return }
             guard let self, self.generation == token, self.isLoading else { return }
-            self.handleFailure(url.isFileURL
+            self.recordFailure(url.isFileURL
                 ? "読み込みが30秒以内に完了しませんでした。"
                 : "読み込みが30秒以内に完了しませんでした。NASとネットワークの接続を確認してください。")
         }
@@ -411,7 +490,7 @@ final class PlaybackController {
     }
 
     /// Finish metadata I/O and prime the decoder before advancing the playback clock.
-    private func prepareCurrent(_ item: AVPlayerItem, url: URL, token: Int) {
+    private func prepareCurrent(_ item: AVPlayerItem, url: URL, token: Int, resumingAt seconds: Double) {
         guard preparation == nil, isLoading else { return }
         preparation = Task { [weak self] in
             let info = await MediaInfo.load(url, asset: item.asset)
@@ -429,18 +508,36 @@ final class PlaybackController {
             }
             guard !Task.isCancelled, self.generation == token else { return }
             guard self.player.status == .readyToPlay else {
-                self.handleFailure("再生の事前準備に失敗しました。")
+                self.recordFailure("再生の事前準備に失敗しました。")
                 return
+            }
+            self.refreshSeekability(item)
+            if seconds > 0 {
+                guard self.seekableRanges.contains(where: { $0.contains(seconds) }) else {
+                    self.recordFailure("最後に確認した位置へ移動できません。ファイルと接続を確認してください。")
+                    return
+                }
+                self.isSeeking = true
+                let finished = await self.performSeek(self.player, CMTime(seconds: seconds, preferredTimescale: 600))
+                guard !Task.isCancelled, self.generation == token else { return }
+                self.isSeeking = false
+                guard finished else { self.recordFailure("再開位置への移動に失敗しました。"); return }
+                let actual = self.player.currentTime().seconds
+                guard actual.isFinite, abs(actual - seconds) < 1 else {
+                    self.recordFailure("再開位置を確認できません。"); return
+                }
+                self.confirmedSeconds = actual
             }
             self.logger.info("Preroll started")
             let prepared = await self.player.preroll(atRate: 1)
             guard !Task.isCancelled, self.generation == token else { return }
             self.preparation = nil
             guard prepared else {
-                self.handleFailure("再生データの事前読み込みに失敗しました。")
+                self.recordFailure("再生データの事前読み込みに失敗しました。")
                 return
             }
             self.isLoading = false
+            self.refreshSeekability(item)
             self.lastAdvance = .now
             self.timeout?.cancel()
             self.logger.info("Preroll complete")
@@ -457,27 +554,30 @@ final class PlaybackController {
         if !isBuffering, elapsed >= .seconds(2) { logger.notice("Playback stopped advancing for at least two seconds") }
         isBuffering = elapsed >= .seconds(2)
         if elapsed >= .seconds(30) {
-            handleFailure(state.currentURL?.isFileURL == false
+            recordFailure(state.currentURL?.isFileURL == false
                 ? "再生が30秒間進みませんでした。NASとネットワークの接続を確認してください。"
                 : "再生が30秒間進みませんでした。外部ストレージの接続も確認してください。")
         }
     }
 
-    private func handleFailure(_ message: String) {
-        let name = currentName
-        let shouldContinue: Bool
-        if isPresenting || selectionMustNotSkip {
-            pause()
-            shouldContinue = false
-        } else {
-            shouldContinue = state.failed()
-        }
-        error = "\(name): \(message)"
-        if shouldContinue { loadCurrent() }
-        else { clearItem() }
+    private func recordFailure(_ message: String, recovery: PlaybackFailure.Recovery? = nil) {
+        guard failure == nil, let url = state.currentURL else { return }
+        confirmPosition()
+        let kind = recovery ?? (url.isFileURL ? .media : .network)
+        failure = PlaybackFailure(url: url, name: currentName, reason: message,
+                                  seconds: confirmedSeconds, recovery: kind)
+        state.failed()
+        needsFolderSelection = kind == .localAccess
+        showsFailure = true
+        clearItem(preservingInfo: true)
+        mediaInfo.name = currentName
+        if mediaInfo.size == "準備中" { mediaInfo.size = "取得できません" }
+        if mediaInfo.video == "準備中" { mediaInfo.video = "取得できません" }
+        if mediaInfo.audio == "準備中" { mediaInfo.audio = "取得できません" }
     }
 
     isolated deinit {
+        seekTask?.cancel()
         preparation?.cancel()
         player.cancelPendingPrerolls()
         watchdog?.cancel()

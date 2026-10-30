@@ -7,11 +7,14 @@ struct TVPlayerScreen: View {
     let folderName: String
     let home: () -> Void
     let chooseFolder: () -> Void
+    let retry: () -> Void
     var browsingFiles = false
     @State private var showsControls = false
     @State private var showsInfo = false
     @State private var infoPresentation: PlaybackController.PresentationSnapshot?
     @FocusState private var focus: Focus?
+    @Namespace private var transportScope
+    @Environment(\.resetFocus) private var resetFocus
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.accessibilityVoiceOverEnabled) private var voiceOver
     private enum Focus: Hashable { case video, play }
@@ -21,37 +24,42 @@ struct TVPlayerScreen: View {
 
     var body: some View {
         playerContent
+        .focusScope(transportScope)
         .background(.black).foregroundStyle(.white).preferredColorScheme(.dark)
         #if DEBUG
         .overlay(alignment: .topTrailing) { PlaybackSessionStatus(playback: playback) }
         #endif
         .onAppear {
             UIApplication.shared.isIdleTimerDisabled = true
-            updateFocus()
         }
         .onDisappear {
             UIApplication.shared.isIdleTimerDisabled = false
         }
-        .onChange(of: browsingFiles) { _, browsing in
-            if browsing { focus = nil } else { updateFocus() }
+        .task(id: [browsingFiles, showsInfo, playback.showsFailure, controlsVisible]) {
+            // The overlay can remove the native focus without changing the old
+            // SwiftUI value. Clear it, then restore after controls are visible.
+            focus = nil
+            await Task.yield()
+            guard !Task.isCancelled, !browsingFiles, !showsInfo, !playback.showsFailure else { return }
+            focus = controlsVisible ? .play : .video
+            resetFocus(in: transportScope)
         }
-        .onChange(of: controlsVisible) { _, _ in updateFocus() }
         .onChange(of: scenePhase) { _, phase in
             UIApplication.shared.isIdleTimerDisabled = phase == .active
         }
         .sheet(isPresented: $showsInfo, onDismiss: closeInfo) {
-            VStack(alignment: .leading, spacing: 28) {
-                Text("メディア情報").font(.title)
-                Text(playback.mediaInfo.name).font(.headline).lineLimit(3)
-                Text("サイズ: \(playback.mediaInfo.size)")
-                Text("映像: \(playback.mediaInfo.video)")
-                Text("音声: \(playback.mediaInfo.audio)")
-                Button("閉じる") { showsInfo = false }
-                    .accessibilityIdentifier("player.info.close")
-            }
-            .padding(60)
-            .onExitCommand { showsInfo = false }
+            MediaInfoSheet(info: playback.mediaInfo, folderName: folderName)
         }
+        .sheet(isPresented: failurePresentation, onDismiss: {
+            focus = .play
+            resetFocus(in: transportScope)
+        }) {
+            PlaybackFailurePanel(playback: playback, retry: retry, browse: chooseFolder)
+        }
+    }
+    private var failureVisible: Bool { playback.showsFailure && !browsingFiles && !showsInfo }
+    private var failurePresentation: Binding<Bool> {
+        Binding(get: { failureVisible }, set: { if !$0 { playback.dismissFailure() } })
     }
 
     private var playerContent: some View {
@@ -64,6 +72,7 @@ struct TVPlayerScreen: View {
                                      onNext: { playback.move(1) },
                                      onShowControls: { showsControls = true })
                     .focused($focus, equals: .video)
+                    .prefersDefaultFocus(!controlsVisible, in: transportScope)
                     .onMoveCommand { direction in
                         switch direction {
                         // Move commands also include edge taps; only touch swipes change files.
@@ -81,9 +90,7 @@ struct TVPlayerScreen: View {
                 VStack(alignment: .leading, spacing: 24) {
                     Text(playback.currentName).font(.title2.bold()).lineLimit(2)
                     Text(folderName).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                    if let error = playback.error {
-                        Text(error).foregroundStyle(.orange).font(.callout).lineLimit(3)
-                    } else if playback.state.ended {
+                    if playback.state.ended {
                         Text("このフォルダーの再生が終了しました。")
                     } else if let reason = playback.pauseReason {
                         Text(reason).font(.callout)
@@ -92,11 +99,15 @@ struct TVPlayerScreen: View {
                         Button("前の動画", systemImage: "backward.end.fill") { playback.move(-1) }
                             .disabled(!playback.state.canGoBack)
                         Button("10秒戻す", systemImage: "gobackward.10") { playback.seek(by: -10) }
+                            .disabled(!playback.canSeek)
                         Button(playback.state.wantsToPlay ? "一時停止" : "再生",
                                systemImage: playback.state.wantsToPlay ? "pause.fill" : "play.fill", action: toggle)
                             .focused($focus, equals: .play)
+                            .prefersDefaultFocus(controlsVisible, in: transportScope)
+                            .disabled(!playback.canResume)
                             .accessibilityIdentifier("player.toggle")
                         Button("10秒進める", systemImage: "goforward.10") { playback.seek(by: 10) }
+                            .disabled(!playback.canSeek)
                         Button("次の動画", systemImage: "forward.end.fill") { playback.move(1) }
                             .disabled(!playback.state.canGoForward)
                     }
@@ -130,11 +141,11 @@ struct TVPlayerScreen: View {
     private func closeInfo() {
         if let infoPresentation { playback.endPresentation(infoPresentation) }
         infoPresentation = nil
-        updateFocus()
     }
 
     private func toggle() {
         if playback.state.wantsToPlay { playback.pause() }
+        else if playback.failure != nil { showsControls = false; retry() }
         else { showsControls = false; playback.resume() }
     }
 
@@ -142,10 +153,6 @@ struct TVPlayerScreen: View {
         chooseFolder()
     }
 
-    private func updateFocus() {
-        guard !browsingFiles else { return }
-        focus = controlsVisible ? .play : .video
-    }
 }
 
 /// Keep transport commands in PlaybackController so end-of-file and error recovery remain shared.

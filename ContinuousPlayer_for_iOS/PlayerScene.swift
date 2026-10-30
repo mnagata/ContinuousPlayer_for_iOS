@@ -34,8 +34,10 @@ struct PlayerScene<Home: View>: View {
         #if os(tvOS)
         .onExitCommand(perform: exitAction)
         .onPlayPauseCommand {
-            guard model.selection == nil, !model.playback.isPresenting, model.showsPlayer, !model.isPreparingSelection else { return }
-            if model.playback.state.wantsToPlay { model.playback.pause() } else { model.playback.resume() }
+            guard model.selection == nil, !model.playback.isPresenting, !model.playback.showsFailure, model.showsPlayer, !model.isPreparingSelection else { return }
+            if model.playback.state.wantsToPlay { model.playback.pause() }
+            else if model.playback.failure != nil { model.retryPlayback() }
+            else { model.playback.resume() }
         }
         #else
         .task { await model.startFixturesIfRequested() }
@@ -55,16 +57,16 @@ struct PlayerScene<Home: View>: View {
     @ViewBuilder private var player: some View {
         #if os(tvOS)
         TVPlayerScreen(playback: model.playback, folderName: model.folderName,
-                       home: model.home, chooseFolder: model.openSelection, browsingFiles: model.selection != nil)
+                       home: model.home, chooseFolder: model.openSelection, retry: model.retryPlayback, browsingFiles: model.selection != nil)
         #else
         PlayerScreen(playback: model.playback, folderName: model.folderName,
-                     home: model.home, chooseFolder: model.openSelection, browsingFiles: model.selection != nil)
+                     home: model.home, chooseFolder: model.openSelection, retry: model.retryPlayback, browsingFiles: model.selection != nil)
         #endif
     }
     #if os(tvOS)
     private var exitAction: (() -> Void)? {
         // Selection and information own Back while they are on top.
-        guard model.selection == nil, model.showsPlayer, !model.playback.isPresenting else { return nil }
+        guard model.selection == nil, model.showsPlayer, !model.playback.isPresenting, !model.playback.showsFailure else { return nil }
         return model.isPreparingSelection ? model.home : model.openSelection
     }
     #endif

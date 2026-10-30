@@ -84,6 +84,7 @@ final class MediaLibrary {
                 defaults.set(data, forKey: bookmarkKey)
             }
         } catch {
+            needsFolderPermission = PlaybackController.isAccessFailure(error)
             self.error = "フォルダーの読み込みに失敗しました。\(error.localizedDescription)"
         }
     }
@@ -185,7 +186,7 @@ final class MediaLibrary {
                 ? "ファイル一覧の「保存済みフォルダー」から、選択したファイルのフォルダーを登録し直してください。"
                 : "同じフォルダーのファイルを読み込めません。\(error.localizedDescription)"
             #endif
-            playback.selectionFailed(self.error!)
+            playback.selectionFailed(self.error!, accessFailure: needsFolderPermission)
         }
     }
 
@@ -199,6 +200,14 @@ final class MediaLibrary {
         scopedFileURL?.stopAccessingSecurityScopedResource()
         scopedFileURL = nil
         #endif
+    }
+
+    /// Replace the grant only. Reauthorization is not a playback command.
+    func renewPlaybackAccess(to url: URL) {
+        let acquired = url.startAccessingSecurityScopedResource()
+        let previous = scopedURL
+        scopedURL = acquired ? url : nil
+        previous?.stopAccessingSecurityScopedResource()
     }
 
     func forgetFolder() {

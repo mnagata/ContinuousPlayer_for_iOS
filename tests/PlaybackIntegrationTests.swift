@@ -193,30 +193,33 @@ import Foundation
         NotificationCenter.default.post(name: AVPlayerItem.failedToPlayToEndTimeNotification, object: failedItem,
             userInfo: [AVPlayerItemFailedToPlayToEndTimeErrorKey: denied])
         try await waitUntil { controller.needsFolderSelection }
-        controller.resume()
-        controller.select(files[0])
-        controller.move(-1)
+        controller.dismissFailure()
+        controller.setActive(false); controller.setActive(true)
         precondition(controller.player.currentItem == nil && !controller.state.wantsToPlay)
         precondition(controller.state.currentURL == files[1])
+        controller.resume() // Explicit play is a retry after the error was closed.
+        try await waitUntil { !controller.isLoading }
+        precondition(controller.failure == nil && controller.state.currentURL == files[1])
+        controller.pause()
         controller.setPlaylist(files)
         precondition(!controller.needsFolderSelection)
         controller.select(files[0], autoplay: false)
         try await waitUntil { !controller.isLoading }
         controller.checkStall(elapsed: .seconds(31))
-        precondition(controller.state.consecutiveFailures == 0 && !controller.isBuffering)
+        precondition(controller.failure == nil && !controller.isBuffering)
         controller.resume()
         controller.checkStall(elapsed: .seconds(3))
         precondition(controller.isBuffering && !controller.showsPauseControls)
         controller.checkStall(elapsed: .seconds(31))
-        precondition(controller.state.currentURL == files[1] && controller.state.consecutiveFailures == 1)
+        precondition(controller.state.currentURL == files[0] && controller.failure != nil && !controller.state.wantsToPlay)
         controller.pause()
         precondition(!controller.isBuffering && controller.showsPauseControls)
 
         let missing = (0..<4).map { directory.appendingPathComponent("missing\($0).mp4") }
         controller.setPlaylist(missing)
         controller.select(missing[0])
-        try await waitUntil { controller.state.consecutiveFailures == 3 }
-        precondition(controller.state.currentURL == missing[2])
+        try await waitUntil { controller.failure != nil }
+        precondition(controller.state.currentURL == missing[0])
         precondition(!controller.state.wantsToPlay && controller.player.currentItem == nil && controller.error != nil)
         controller.setPlaylist(files)
         controller.select(files[0])

@@ -7,6 +7,7 @@ struct PlayerScreen: View {
     let folderName: String
     let home: () -> Void
     let chooseFolder: () -> Void
+    let retry: () -> Void
     var browsingFiles = false
     private var info: MediaInfo { playback.mediaInfo }
     @State private var outputSummary = ""
@@ -25,6 +26,7 @@ struct PlayerScreen: View {
     private var controlsVisible: Bool {
         playback.showsPauseControls || playback.state.ended || playback.needsFolderSelection || playback.error != nil || voiceOver
     }
+    private var failureVisible: Bool { playback.showsFailure && !browsingFiles && sheet == nil }
 
     var body: some View {
         GeometryReader { geometry in
@@ -33,7 +35,7 @@ struct PlayerScreen: View {
                 ZStack {
                     PlaybackSurface(
                         player: playback.player,
-                        keyboardEnabled: isEnabled && !browsingFiles && sheet == nil && scenePhase == .active && !playback.needsFolderSelection,
+                        keyboardEnabled: isEnabled && !browsingFiles && sheet == nil && !playback.showsFailure && scenePhase == .active,
                         onPrevious: { playback.move(-1) },
                         onNext: { playback.move(1) },
                         onTogglePlayback: toggle,
@@ -94,6 +96,11 @@ struct PlayerScreen: View {
                 #endif
             }
         }
+        .allowsHitTesting(!failureVisible)
+        .accessibilityHidden(failureVisible)
+        .overlay {
+            if failureVisible { PlaybackFailurePanel(playback: playback, retry: retry, browse: chooseFolder) }
+        }
         .background(.black).foregroundStyle(.white).preferredColorScheme(.dark)
         #if DEBUG
         .overlay(alignment: .bottomLeading) { PlaybackSessionStatus(playback: playback) }
@@ -102,8 +109,8 @@ struct PlayerScreen: View {
         .background {
             CatalystPlaybackTitlebar(filename: playback.currentName,
                                      isPlaying: playback.state.wantsToPlay,
-                                     actionsEnabled: isEnabled && !browsingFiles && sheet == nil,
-                                     playbackEnabled: !playback.needsFolderSelection,
+                                     actionsEnabled: isEnabled && !browsingFiles && sheet == nil && !playback.showsFailure,
+                                     playbackEnabled: playback.canResume,
                                      home: home, chooseFolder: chooseFolder,
                                      showInfo: openInfo, togglePlayback: toggle)
                 .allowsHitTesting(false)
@@ -129,7 +136,6 @@ struct PlayerScreen: View {
     @ViewBuilder
     private var playbackStatusMessages: some View {
         if playback.state.ended { Label("最後まで再生しました", systemImage: "checkmark.circle") }
-        if let error = playback.error { Text(error).foregroundStyle(.orange) }
         if let reason = playback.pauseReason { Text(reason).foregroundStyle(.secondary) }
     }
 
@@ -164,7 +170,7 @@ struct PlayerScreen: View {
                 control("OP / EDを選び直す", "folder", action: chooseFolder)
                 control("メディア情報", "info.circle", action: openInfo)
                 control(playback.state.wantsToPlay ? "一時停止" : "再生", playback.state.wantsToPlay ? "pause.fill" : "play.fill", action: toggle)
-                    .disabled(playback.needsFolderSelection)
+                    .disabled(!playback.canResume)
             }.padding(.horizontal, 8)
         }
         .padding(.top, 8).background(.white.opacity(0.08))
@@ -172,9 +178,9 @@ struct PlayerScreen: View {
 
     private var touchControls: some View {
         HStack(spacing: 0) {
-            touchRegion("10秒戻す") { playback.seek(by: -10) }
+            touchRegion("10秒戻す") { playback.seek(by: -10) }.disabled(!playback.canSeek)
             touchRegion(playback.state.wantsToPlay ? "一時停止" : "再生", action: toggle)
-            touchRegion("10秒進める") { playback.seek(by: 10) }
+            touchRegion("10秒進める") { playback.seek(by: 10) }.disabled(!playback.canSeek)
         }
         .highPriorityGesture(DragGesture(minimumDistance: 35).onEnded { value in
             guard abs(value.translation.width) > 70,
@@ -196,11 +202,11 @@ struct PlayerScreen: View {
         HStack {
             control("前のファイル", "backward.end.fill") { playback.move(-1) }.disabled(!playback.state.canGoBack || playback.needsFolderSelection)
             Spacer(minLength: 0)
-            control("10秒戻す", "gobackward.10") { playback.seek(by: -10) }
+            control("10秒戻す", "gobackward.10") { playback.seek(by: -10) }.disabled(!playback.canSeek)
             Spacer(minLength: 0)
-            control(playback.state.wantsToPlay ? "一時停止" : "再生", playback.state.wantsToPlay ? "pause.fill" : "play.fill", action: toggle).disabled(playback.needsFolderSelection)
+            control(playback.state.wantsToPlay ? "一時停止" : "再生", playback.state.wantsToPlay ? "pause.fill" : "play.fill", action: toggle).disabled(!playback.canResume)
             Spacer(minLength: 0)
-            control("10秒進める", "goforward.10") { playback.seek(by: 10) }
+            control("10秒進める", "goforward.10") { playback.seek(by: 10) }.disabled(!playback.canSeek)
             Spacer(minLength: 0)
             control("次のファイル", "forward.end.fill") { playback.move(1) }.disabled(!playback.state.canGoForward || playback.needsFolderSelection)
         }
@@ -228,7 +234,9 @@ struct PlayerScreen: View {
     }
 
     private func toggle() {
-        if playback.state.wantsToPlay { playback.pause() } else { playback.resume() }
+        if playback.state.wantsToPlay { playback.pause() }
+        else if playback.failure != nil { retry() }
+        else { playback.resume() }
     }
 
     private func refreshOutput() {
@@ -237,50 +245,6 @@ struct PlayerScreen: View {
     }
 }
 
-
-private struct MediaInfoSheet: View {
-    let info: MediaInfo
-    let folderName: String
-    @Environment(\.dismiss) private var dismiss
-    @State private var route = ""
-    @State private var sampleRate = ""
-    var body: some View {
-        NavigationStack {
-            List {
-                Section("ファイル") {
-                    LabeledContent("名前", value: info.name)
-                    LabeledContent("フォルダー", value: folderName)
-                    LabeledContent("サイズ", value: info.size)
-                }
-                Section("メディア形式") {
-                    LabeledContent("映像", value: info.video)
-                    LabeledContent("音声", value: info.audio)
-                }
-                Section("音声出力") {
-                    LabeledContent("デバイス", value: route)
-                    LabeledContent("実際の出力設定", value: sampleRate)
-                    Text("出力設定はAVAudioSessionの現在値です。ビットパーフェクトを保証するものではありません。")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-            }
-            .textSelection(.enabled)
-            .safeAreaInset(edge: .bottom) {
-                Text("キーボード: I または Esc で閉じる")
-                    .font(.caption).foregroundStyle(.secondary).padding(8)
-            }
-            .background(InfoKeyboardCommands { dismiss() })
-            .navigationTitle("メディア情報").navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("閉じる") { dismiss() } } }
-        }
-        .onAppear(perform: refresh)
-        .onReceive(NotificationCenter.default.publisher(for: AVAudioSession.routeChangeNotification)) { _ in refresh() }
-    }
-    private func refresh() {
-        let audio = AVAudioSession.sharedInstance()
-        route = audio.currentRoute.outputs.map(\.portName).joined(separator: ", ")
-        sampleRate = "\(String(format: "%.1f", audio.sampleRate / 1000)) kHz · \(audio.outputNumberOfChannels) ch"
-    }
-}
 
 private struct PlayerControl: View {
     let label: String
@@ -300,45 +264,4 @@ private struct PlayerControl: View {
 
 #Preview("情報") {
     MediaInfoSheet(info: MediaInfo(name: "星の旅 OP.mp4", size: "120 MB", video: "avc1 · 1920 × 1080 · 23.98 fps", audio: "aac · 48.0 kHz · 2 ch"), folderName: "OP・ED")
-}
-
-/// Own the responder in the sheet so playback shortcuts cannot leak through it.
-private struct InfoKeyboardCommands: UIViewControllerRepresentable {
-    let close: () -> Void
-
-    final class Controller: UIViewController {
-        var close: (() -> Void)?
-        override var canBecomeFirstResponder: Bool { true }
-        override var keyCommands: [UIKeyCommand]? {
-            ["i", UIKeyCommand.inputEscape].map { input in
-                let command = UIKeyCommand(input: input, modifierFlags: [], action: #selector(closeInfo))
-                command.discoverabilityTitle = "メディア情報を閉じる"
-                command.wantsPriorityOverSystemBehavior = true
-                return command
-            }
-        }
-        override func viewDidAppear(_ animated: Bool) {
-            super.viewDidAppear(animated)
-            becomeFirstResponder()
-        }
-        override func viewWillDisappear(_ animated: Bool) {
-            resignFirstResponder()
-            super.viewWillDisappear(animated)
-        }
-        @objc private func closeInfo() { close?() }
-    }
-
-    func makeUIViewController(context: Context) -> Controller {
-        let controller = Controller()
-        controller.view.isUserInteractionEnabled = false
-        controller.close = close
-        return controller
-    }
-    func updateUIViewController(_ controller: Controller, context: Context) {
-        controller.close = close
-    }
-    static func dismantleUIViewController(_ controller: Controller, coordinator: ()) {
-        controller.resignFirstResponder()
-        controller.close = nil
-    }
 }
