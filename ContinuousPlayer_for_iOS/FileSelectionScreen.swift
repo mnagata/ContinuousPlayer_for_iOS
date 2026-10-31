@@ -11,6 +11,7 @@ struct FileSelectionScreen: View {
     @State private var showsLocalPicker = false
     @FocusState private var focusID: String?
     @AccessibilityFocusState private var accessibilityFocusID: String?
+    @State private var nativeViewport = ListViewport()
     private enum Removal: Identifiable {
         case local(RegisteredLocalFolder), dlna(RegisteredDLNAFolder)
         var id: String {
@@ -33,6 +34,14 @@ struct FileSelectionScreen: View {
         NavigationStack {
             ScrollViewReader { proxy in
                 pageContent
+                    .background { ListViewportProbe(viewport: nativeViewport) }
+                    .onKeyPress(keys: listKeys, phases: [.down, .repeat], action: handleKey)
+                    #if !os(tvOS)
+                    .background {
+                        ListKeyboardInput(enabled: !flow.busy && pendingRemoval == nil && !showsLocalPicker && !navigableIDs.isEmpty,
+                                          revision: flow.focusRevision, handle: handleNativeKey)
+                    }
+                    #endif
                     .disabled(flow.busy)
                     .overlay {
                         if flow.showsLoading {
@@ -48,7 +57,13 @@ struct FileSelectionScreen: View {
                         await Task.yield()
                         guard !Task.isCancelled else { return }
                         if let id { proxy.scrollTo(id, anchor: .center) }
-                        focusID = id; accessibilityFocusID = id
+                        accessibilityFocusID = id
+                        if flow.page == .saved && flow.selectedSavedID == nil { flow.selectedSavedID = id }
+                        #if os(tvOS)
+                        focusID = id
+                        #else
+                        if navigableIDs.isEmpty && isRegistration { focusID = "dlna.registerFolder" }
+                        #endif
                     }
             }
             .navigationTitle(flow.title)
@@ -57,6 +72,7 @@ struct FileSelectionScreen: View {
                 if flow.page != .saved {
                     ToolbarItem(placement: .topBarLeading) {
                         Button(flow.parentTitle, systemImage: "chevron.left") { flow.back() }
+                            .focused($focusID, equals: "selection.back")
                             .accessibilityIdentifier("selection.back")
                     }
                 }
@@ -76,9 +92,39 @@ struct FileSelectionScreen: View {
             .fileBrowserBackground()
         }
         .fileBrowserDialogContainer()
+        #if DEBUG
+        .overlay(alignment: .bottomLeading) {
+            if ProcessInfo.processInfo.arguments.contains("--ui-session-state") {
+                Text("selection=\(flow.selectedRowID ?? flow.selectedSavedID ?? "nil")|focus=\(focusID ?? "nil")|page=\(nativeViewport.pageSize() ?? 1)")
+                    .font(.caption2).accessibilityIdentifier("selection.inputState").allowsHitTesting(false)
+            }
+        }
+        #endif
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier(flow.origin == .playback ? "player.fileBrowserOverlay" : "selection.flow")
-        .fileBrowserBackShortcut(enabled: true) { flow.back() }
+        .onKeyPress(keys: [.escape, .delete], phases: [.down, .repeat]) { key in
+            guard !key.hasCommandModifiers, pendingRemoval == nil, !showsLocalPicker else { return .ignored }
+            // Server text/IME keeps its responder. Standard Cancel still uses
+            // the OS shortcut after the editor has had the chance to consume it.
+            if flow.page == .servers { return .ignored }
+            if key.inputName == "escape" {
+                #if targetEnvironment(macCatalyst)
+                if MacPlaybackWindowPolicy.fullScreenOwnsEscape { return .ignored }
+                #endif
+                if key.phase == .down { flow.cancelPage() }
+                return .handled
+            }
+            if key.inputName == "backspace" {
+                if key.phase == .down { flow.back() }
+                return .handled
+            }
+            return .ignored
+        }
+        .onChange(of: focusID) { _, id in
+            guard let id else { return }
+            if flow.page == .saved, flow.savedIDs.contains(id) { flow.selectedSavedID = id }
+            else if flow.rows.contains(where: { $0.id == id }) { flow.selectedRowID = id }
+        }
         #if os(tvOS)
         .onExitCommand { flow.back() }
         #endif
@@ -132,12 +178,19 @@ struct FileSelectionScreen: View {
                         }.padding(.vertical, 8).contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
+                    .highPriorityGesture(LongPressGesture(minimumDuration: 0.6).onEnded { _ in })
+                    .accessibilityAction(named: Text(row.isFolder ? "フォルダーを開く" : "このファイルから再生")) { flow.activate(row) }
                     .disabled(isRegistration && !row.isFolder)
                     .fileBrowserEntryRowStyle(isCurrent: flow.selectedRowID == row.id)
+                    .fileBrowserKeyboardFocusable()
                     .focused($focusID, equals: row.id)
                     .accessibilityFocused($accessibilityFocusID, equals: row.id)
                     .accessibilityAddTraits(flow.selectedRowID == row.id ? .isSelected : [])
                     .id(row.id)
+                    .onKeyPress(keys: listKeys, phases: [.down, .repeat], action: handleKey)
+                    #if os(tvOS)
+                    .onMoveCommand { moveList($0) }
+                    #endif
                     .accessibilityIdentifier(row.isFolder ? folderID(row) : "selection.file.\(row.id)")
                     .accessibilityLabel(row.isFolder ? row.name : fileLabel(row))
                 }
@@ -195,7 +248,7 @@ struct FileSelectionScreen: View {
     @ViewBuilder private var footer: some View {
         VStack(spacing: 12) {
             if flow.page == .saved {
-                Button(action: flow.showSources) { Label("フォルダーを追加", systemImage: "plus.circle.fill") }
+                Button(action: flow.showSources) { Label("フォルダーを追加", systemImage: "plus.circle.fill") }.keyboardAction(flow.showSources)
                     .disabled(flow.busy).id("saved.addFolder")
                     .focused($focusID, equals: "saved.addFolder")
                     .accessibilityFocused($accessibilityFocusID, equals: "saved.addFolder")
@@ -206,10 +259,12 @@ struct FileSelectionScreen: View {
             if case .folder = flow.page {
                 HStack(spacing: 20) {
                     if isRegistration {
-                        Button("このフォルダーを登録", systemImage: "bookmark", action: flow.registerCurrent)
+                        Button("このフォルダーを登録", systemImage: "bookmark", action: flow.registerCurrent).keyboardAction(flow.registerCurrent)
+                            .focused($focusID, equals: "dlna.registerFolder")
                             .accessibilityIdentifier("dlna.registerFolder")
                     }
-                    Button("再読み込み", systemImage: "arrow.clockwise", action: flow.reload)
+                    Button("再読み込み", systemImage: "arrow.clockwise", action: flow.reload).keyboardAction(flow.reload)
+                        .focused($focusID, equals: "selection.reload")
                         .accessibilityIdentifier("selection.reload")
                 }.disabled(flow.busy)
             }
@@ -218,6 +273,7 @@ struct FileSelectionScreen: View {
                 cancelButton
                 if flow.origin == .playback {
                     Button("ホームに戻る", systemImage: "house", action: home)
+                        .focused($focusID, equals: "selection.home")
                         .accessibilityIdentifier("selection.home")
                 }
             }
@@ -229,6 +285,7 @@ struct FileSelectionScreen: View {
     }
     private var cancelButton: some View {
         Button(flow.page == .saved && flow.origin == .home ? "閉じる" : "キャンセル", role: .cancel) { flow.cancelPage() }
+            .focused($focusID, equals: "selection.cancel")
             .fileBrowserCancelShortcut()
             .accessibilityIdentifier(cancelID)
     }
@@ -251,10 +308,15 @@ struct FileSelectionScreen: View {
         .swipeActions { Button("登録解除", role: .destructive, action: remove) }
         #endif
         .fileBrowserEntryRowStyle(isCurrent: flow.selectedSavedID == id)
+        .fileBrowserKeyboardFocusable()
         .focused($focusID, equals: id)
         .accessibilityFocused($accessibilityFocusID, equals: id)
         .accessibilityAddTraits(flow.selectedSavedID == id ? .isSelected : [])
         .id(id).accessibilityIdentifier(id)
+        .onKeyPress(keys: listKeys, phases: [.down, .repeat], action: handleKey)
+        #if os(tvOS)
+        .onMoveCommand { moveList($0) }
+        #endif
         #if targetEnvironment(macCatalyst)
         .background { RegistrationSecondaryClick(action: remove).accessibilityHidden(true) }
         #elseif !os(tvOS)
@@ -262,6 +324,79 @@ struct FileSelectionScreen: View {
         #endif
     }
     private func folderID(_ row: SelectionRow) -> String { row.remote.map { "dlna.folder.\($0.id)" } ?? "selection.folder.\(row.id)" }
+    private var navigableIDs: [String] {
+        if flow.page == .saved { return flow.savedIDs }
+        if case .folder = flow.page { return flow.rows.filter { !isRegistration || $0.isFolder }.map(\.id) }
+        return []
+    }
+    private func navigate(_ offset: Int) {
+        guard !flow.busy, pendingRemoval == nil, !showsLocalPicker else { return }
+        let ids = navigableIDs
+        guard let id = FileListInput.destination(ids: ids, selected: flow.page == .saved ? flow.selectedSavedID : flow.selectedRowID, offset: offset) else { return }
+        focusID = id
+        if flow.page == .saved { flow.selectedSavedID = id } else { flow.selectedRowID = id }
+        flow.revealSelection()
+    }
+    private func page(_ direction: Int) {
+        navigate(direction * (nativeViewport.pageSize() ?? 1))
+    }
+    private var listKeys: Set<KeyEquivalent> {
+        #if os(tvOS)
+        [.pageUp, .pageDown]
+        #else
+        [.leftArrow, .rightArrow, .upArrow, .downArrow, .pageUp, .pageDown, .return]
+        #endif
+    }
+    private func handleKey(_ key: KeyPress) -> KeyPress.Result {
+        #if os(tvOS)
+        // Remote directions belong to onMoveCommand / the focus engine. Registering
+        // the same arrows as KeyPress handlers otherwise consumes footer movement.
+        if [.leftArrow, .rightArrow, .upArrow, .downArrow, .return].contains(key.key) { return .ignored }
+        #endif
+        guard !key.hasCommandModifiers, pendingRemoval == nil, !showsLocalPicker,
+              let focused = focusID, navigableIDs.contains(focused) else { return .ignored }
+        return handleNativeKey(key.inputName, key.phase != .down, focused: focused) ? .handled : .ignored
+    }
+    private func handleNativeKey(_ name: String, _ repeating: Bool) -> Bool {
+        handleNativeKey(name, repeating, focused: flow.page == .saved ? (flow.selectedSavedID ?? flow.savedIDs.first) : (flow.selectedRowID ?? navigableIDs.first))
+    }
+    private func handleNativeKey(_ name: String, _ repeating: Bool, focused: String?) -> Bool {
+        guard !flow.busy, pendingRemoval == nil, !showsLocalPicker else { return false }
+        #if targetEnvironment(macCatalyst)
+        if name == "escape" && MacPlaybackWindowPolicy.fullScreenOwnsEscape { return false }
+        #endif
+        if name == "escape" { if !repeating { flow.cancelPage() }; return true }
+        if name == "backspace" { if !repeating { flow.back() }; return true }
+        guard let focused, navigableIDs.contains(focused),
+              ["left", "right", "pageUp", "pageDown", "up", "down", "return"].contains(name) else { return false }
+        if repeating { return true }
+        switch name {
+        case "left", "pageUp": page(-1)
+        case "right", "pageDown": page(1)
+        case "up": navigate(-1)
+        case "down": navigate(1)
+        default:
+            if flow.page == .saved {
+                if let local = flow.registrations.local.first(where: { "saved.local.\($0.id)" == focused }) { flow.open(local) }
+                else if let remote = flow.registrations.dlna.first(where: { "saved.dlna.\($0.id)" == focused }) { flow.open(remote) }
+            } else if let row = flow.rows.first(where: { $0.id == focused }) { flow.activate(row) }
+        }
+        return true
+    }
+    #if os(tvOS)
+    private func moveList(_ direction: MoveCommandDirection) {
+        switch direction {
+        case .left: page(-1)
+        case .right: page(1)
+        case .up: navigate(-1)
+        case .down:
+            if (flow.page == .saved ? flow.selectedSavedID : flow.selectedRowID) == navigableIDs.last {
+                focusID = flow.page == .saved ? "saved.addFolder" : (isRegistration ? "dlna.registerFolder" : "selection.reload")
+            } else { navigate(1) }
+        default: break
+        }
+    }
+    #endif
     private func fileLabel(_ row: SelectionRow) -> String { row.remote == nil ? "\(displayName(row))を選択" : "\(row.name)から連続再生" }
     private func displayName(_ row: SelectionRow) -> String {
         // DLNA display-name/badge unification is a later stage.

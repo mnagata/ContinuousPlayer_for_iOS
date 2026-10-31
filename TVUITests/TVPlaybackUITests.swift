@@ -5,7 +5,7 @@ final class TVPlaybackUITests: XCTestCase {
     func testRemoteBrowsePlaybackAndReturn() throws {
         continueAfterFailure = false
         let app = XCUIApplication()
-        app.launchArguments = ["--ui-bookmark-tests", "-dlna.lastServerAddress", "127.0.0.1:18765"]
+        app.launchArguments = ["--ui-bookmark-tests", "--ui-reset-registrations", "-dlna.lastServerAddress", "127.0.0.1:18765"]
         app.launch()
         defer { app.terminate() }
         XCTAssertTrue(app.buttons["home.chooseFolder"].waitForExistence(timeout: 10))
@@ -53,9 +53,11 @@ final class TVPlaybackUITests: XCTestCase {
         XCTAssertTrue(video.waitForExistence(timeout: 10))
         XCTAssertEqual(video.value as? String, "作品 OP.mp4")
         XCUIRemote.shared.press(.right)
-        XCTAssertEqual(video.value as? String, "作品 OP.mp4", "Right press must not skip to ED")
+        let next = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "作品 ED.mp4"), object: video)
+        XCTAssertEqual(XCTWaiter.wait(for: [next], timeout: 10), .completed, "Right direction selects the next file")
         XCUIRemote.shared.press(.left)
-        XCTAssertEqual(video.value as? String, "作品 OP.mp4", "Left press must not change the file")
+        let previous = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "作品 OP.mp4"), object: video)
+        XCTAssertEqual(XCTWaiter.wait(for: [previous], timeout: 10), .completed, "Left direction selects the previous file")
         XCUIRemote.shared.press(.playPause)
         XCTAssertTrue(app.buttons["player.toggle"].waitForExistence(timeout: 5))
         XCTAssertEqual(app.buttons["player.toggle"].label, "再生")
@@ -66,7 +68,7 @@ final class TVPlaybackUITests: XCTestCase {
     func testBackRestoresNestedFolderPositionAndFocus() throws {
         continueAfterFailure = false
         let app = XCUIApplication()
-        app.launchArguments = ["--ui-bookmark-tests", "-dlna.lastServerAddress", "http://127.0.0.1:18765/folders.xml"]
+        app.launchArguments = ["--ui-bookmark-tests", "--ui-reset-registrations", "-dlna.lastServerAddress", "http://127.0.0.1:18765/folders.xml"]
         app.launch()
         defer { app.terminate() }
         XCTAssertTrue(app.buttons["home.chooseFolder"].waitForExistence(timeout: 10))
@@ -125,7 +127,13 @@ final class TVPlaybackUITests: XCTestCase {
     private func focus(_ element: XCUIElement) throws {
         if isFocused(element) { return }
         for _ in 0..<60 {
-            XCUIRemote.shared.press(.down)
+            let app = XCUIApplication()
+            let focused = (app.buttons.allElementsBoundByIndex + app.cells.allElementsBoundByIndex).first { $0.hasFocus }
+            if let focused {
+                let dx = element.frame.midX - focused.frame.midX, dy = element.frame.midY - focused.frame.midY
+                if abs(dy) > max(10, focused.frame.height / 2) { XCUIRemote.shared.press(dy < 0 ? .up : .down) }
+                else { XCUIRemote.shared.press(dx < 0 ? .left : .right) }
+            } else { XCUIRemote.shared.press(.down) }
             if isFocused(element) { return }
         }
         print(XCUIApplication().debugDescription)

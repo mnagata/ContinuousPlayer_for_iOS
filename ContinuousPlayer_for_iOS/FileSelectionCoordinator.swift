@@ -92,6 +92,7 @@ final class FileSelectionCoordinator {
     @ObservationIgnored private let choose: (MediaSelection) -> Void
     @ObservationIgnored private let cancelled: () -> Void
     var busy: Bool { isLoading || isConnecting }
+    func revealSelection() { focusRevision += 1 }
 
     init(origin: Origin, registrations: RegisteredFolders,
          browse: @escaping (SelectionFolder) async throws -> [SelectionRow] = FileSelectionCoordinator.readFolder,

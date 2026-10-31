@@ -10,6 +10,15 @@
 - (void)stopSecondaryClick;
 @end
 
+@protocol CPPlaybackPointerProtocol <NSObject>
+- (void)startPointerWithHandler:(BOOL (^)(NSInteger, double, double, double, double, NSInteger, BOOL, double))handler;
+- (void)stopPointer;
+- (BOOL)keyWindowIsFullScreen;
+- (void)setPlaybackToolbarIdentifier:(NSString *)identifier;
+- (void)preparePlaybackToolbarWithActivation:(void (^)(NSString *))activate;
+- (BOOL)focusPlaybackToolbarBackwards:(BOOL)backwards video:(void (^)(void))video browse:(void (^)(void))browse activate:(void (^)(NSString *))activate;
+@end
+
 int main(int argc, const char *argv[]) {
     @autoreleasepool {
         NSCAssert(argc == 2, @"Pass the built native bundle path");
@@ -42,6 +51,20 @@ int main(int argc, const char *argv[]) {
         [input startSecondaryClickWithHandler:^BOOL(double x, double y, double width, double height) { return NO; }];
         [input stopSecondaryClick];
         [input stopSecondaryClick];
+        id<CPPlaybackPointerProtocol> pointer = [[type alloc] init];
+        NSCAssert([pointer conformsToProtocol:@protocol(CPPlaybackPointerProtocol)], @"Pointer boundary conforms");
+        for (NSUInteger i = 0; i < 2; i++) {
+            [pointer startPointerWithHandler:^BOOL(NSInteger phase, double x, double y, double width, double height,
+                                                   NSInteger clicks, BOOL active, double time) { return NO; }];
+        }
+        [pointer stopPointer]; [pointer stopPointer];
+        NSCAssert(![pointer keyWindowIsFullScreen], @"No fullscreen window in this test process");
+        [pointer setPlaybackToolbarIdentifier:@"absent-test-window"];
+        [pointer preparePlaybackToolbarWithActivation:^(NSString *item) { NSCAssert(NO, @"No toolbar to activate"); }];
+        NSCAssert(![pointer focusPlaybackToolbarBackwards:NO video:^{} browse:^{} activate:^(NSString *item) {}],
+                  @"Missing scoped window never falls back to another toolbar");
+        puts("PASS: scoped toolbar rejects an absent window");
+        puts("PASS: pointer typed boundary, monitor replacement and cleanup (event dispatch requires UI acceptance)");
         puts("PASS: secondary-click typed boundary, monitor replacement and cleanup");
         puts("PASS: native bundle loading, typed boundary, sleep/display/session/hide notifications, observer cleanup (synthetic events)");
     }

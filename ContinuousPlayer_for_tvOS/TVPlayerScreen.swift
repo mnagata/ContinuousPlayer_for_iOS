@@ -9,17 +9,17 @@ struct TVPlayerScreen: View {
     let chooseFolder: () -> Void
     let retry: () -> Void
     var browsingFiles = false
-    @State private var showsControls = false
     @State private var showsInfo = false
     @State private var infoPresentation: PlaybackController.PresentationSnapshot?
     @FocusState private var focus: Focus?
     @Namespace private var transportScope
     @Environment(\.resetFocus) private var resetFocus
+    @Environment(\.isEnabled) private var isEnabled
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.accessibilityVoiceOverEnabled) private var voiceOver
     private enum Focus: Hashable { case video, play }
     private var controlsVisible: Bool {
-        showsControls || !playback.state.wantsToPlay || playback.error != nil || voiceOver
+        !playback.state.wantsToPlay || playback.error != nil || voiceOver
     }
 
     var body: some View {
@@ -47,12 +47,19 @@ struct TVPlayerScreen: View {
         .onChange(of: scenePhase) { _, phase in
             UIApplication.shared.isIdleTimerDisabled = phase == .active
         }
+        .onPlayPauseCommand { perform(.toggle) }
+        .background {
+            PlaybackMediaCommands(player: playback.player, name: playback.currentName,
+                                  enabled: acceptsInput, onCommand: perform).frame(width: 0, height: 0)
+        }
         .sheet(isPresented: $showsInfo, onDismiss: closeInfo) {
             MediaInfoSheet(info: playback.mediaInfo, folderName: folderName)
         }
         .sheet(isPresented: failurePresentation, onDismiss: {
-            focus = .play
-            resetFocus(in: transportScope)
+            if !browsingFiles && !showsInfo {
+                focus = controlsVisible ? .play : .video
+                resetFocus(in: transportScope)
+            }
         }) {
             PlaybackFailurePanel(playback: playback, retry: retry, browse: chooseFolder)
         }
@@ -66,19 +73,16 @@ struct TVPlayerScreen: View {
         ZStack {
             TVPlaybackSurface(player: playback.player)
                 .ignoresSafeArea()
-            if !controlsVisible && !browsingFiles {
-                TVRemoteInputSurface(currentName: playback.currentName,
-                                     onPrevious: { playback.move(-1) },
-                                     onNext: { playback.move(1) },
-                                     onShowControls: { showsControls = true })
+            if !controlsVisible && acceptsInput {
+                TVRemoteInputSurface(currentName: playback.currentName, onCommand: perform)
                     .focused($focus, equals: .video)
                     .prefersDefaultFocus(!controlsVisible, in: transportScope)
-                    .onMoveCommand { direction in
-                        switch direction {
-                        // Move commands also include edge taps; only touch swipes change files.
-                        case .left, .right: break
-                        default: showsControls = true
-                        }
+                    .onKeyPress(phases: [.down, .repeat]) { key in
+                        guard acceptsInput, !key.hasCommandModifiers,
+                              let command = PlaybackKeyboardInput.command(key.inputName, shift: key.modifiers.contains(.shift))
+                        else { return .ignored }
+                        if key.phase == .down { perform(command) }
+                        return .handled
                     }
             }
             if playback.isLoading || playback.isBuffering {
@@ -96,9 +100,9 @@ struct TVPlayerScreen: View {
                         Text(reason).font(.callout)
                     }
                     HStack(spacing: 30) {
-                        Button("前の動画", systemImage: "backward.end.fill") { playback.move(-1) }
+                        Button("前の動画", systemImage: "backward.end.fill") { perform(.previous) }
                             .disabled(!playback.state.canGoBack)
-                        Button("10秒戻す", systemImage: "gobackward.10") { playback.seek(by: -10) }
+                        Button("10秒戻す", systemImage: "gobackward.10") { perform(.backward) }
                             .disabled(!playback.canSeek)
                         Button(playback.state.wantsToPlay ? "一時停止" : "再生",
                                systemImage: playback.state.wantsToPlay ? "pause.fill" : "play.fill", action: toggle)
@@ -106,9 +110,9 @@ struct TVPlayerScreen: View {
                             .prefersDefaultFocus(controlsVisible, in: transportScope)
                             .disabled(!playback.canResume)
                             .accessibilityIdentifier("player.toggle")
-                        Button("10秒進める", systemImage: "goforward.10") { playback.seek(by: 10) }
+                        Button("10秒進める", systemImage: "goforward.10") { perform(.forward) }
                             .disabled(!playback.canSeek)
-                        Button("次の動画", systemImage: "forward.end.fill") { playback.move(1) }
+                        Button("次の動画", systemImage: "forward.end.fill") { perform(.next) }
                             .disabled(!playback.state.canGoForward)
                     }
                     .labelStyle(.iconOnly)
@@ -117,11 +121,8 @@ struct TVPlayerScreen: View {
                             .accessibilityIdentifier("player.chooseFolder")
                         Button("メディア情報", action: openInfo)
                         Button("ホームに戻る") { playback.pause(); home() }
-                        if playback.state.wantsToPlay && !voiceOver {
-                            Button("映像に戻る") { showsControls = false }
-                        }
                     }
-                    Text("再生／停止ボタンで切り替え · 戻るボタンでファイル一覧へ")
+                    Text("方向ボタンで操作部を移動 · 決定で実行 · 戻るでファイル一覧へ")
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 .padding(48)
@@ -143,11 +144,13 @@ struct TVPlayerScreen: View {
         infoPresentation = nil
     }
 
-    private func toggle() {
-        if playback.state.wantsToPlay { playback.pause() }
-        else if playback.failure != nil { showsControls = false; retry() }
-        else { showsControls = false; playback.resume() }
+    private var acceptsInput: Bool { isEnabled && !browsingFiles && !showsInfo && !playback.showsFailure && scenePhase == .active }
+    private func perform(_ command: PlaybackInputCommand) {
+        guard acceptsInput else { return }
+        PlaybackInputActions(playback: playback, retry: retry, browse: chooseFolder,
+                             info: openInfo, home: home).perform(command)
     }
+    private func toggle() { perform(.toggle) }
 
     private func leavePlayer() {
         chooseFolder()
@@ -172,67 +175,84 @@ private struct TVPlaybackSurface: UIViewRepresentable {
     static func dismantleUIView(_ view: Surface, coordinator: ()) { view.playerLayer.player = nil }
 }
 
-/// Receive actual touch movement separately from the remote's directional button presses.
+/// Directional presses and indirect touch each have one native owner. No
+/// onMoveCommand is installed on the video, so focus-generated moves cannot
+/// replay the swipe. A press during that contact also suppresses its final swipe.
 private struct TVRemoteInputSurface: UIViewRepresentable {
     let currentName: String
-    let onPrevious: () -> Void
-    let onNext: () -> Void
-    let onShowControls: () -> Void
-
+    let onCommand: (PlaybackInputCommand) -> Void
     final class InputView: UIView {
-        var onPrevious: (() -> Void)?
-        var onNext: (() -> Void)?
-        var onShowControls: (() -> Void)?
+        var onCommand: ((PlaybackInputCommand) -> Void)?
+        var input = TVDirectionalInput()
         override var canBecomeFocused: Bool { true }
-
+        override var canBecomeFirstResponder: Bool { isFocused }
         override init(frame: CGRect) {
             super.init(frame: frame)
             isAccessibilityElement = true
             accessibilityIdentifier = "player.video"
-            accessibilityLabel = "再生中。選択で操作ボタンを表示"
-            for direction: UISwipeGestureRecognizer.Direction in [.left, .right, .up, .down] {
-                let swipe = UISwipeGestureRecognizer(target: self, action: #selector(swiped(_:)))
-                swipe.direction = direction
-                swipe.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.indirect.rawValue)]
-                swipe.allowedPressTypes = []
-                addGestureRecognizer(swipe)
-            }
-            let select = UITapGestureRecognizer(target: self, action: #selector(selected))
-            select.allowedTouchTypes = []
-            select.allowedPressTypes = [NSNumber(value: UIPress.PressType.select.rawValue)]
-            addGestureRecognizer(select)
+            accessibilityLabel = "再生領域。決定で一時停止、左右で前後、上下で10秒移動"
+            let touch = RemoteTouch(target: self, action: #selector(swiped(_:)))
+            touch.owner = self
+            touch.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.indirect.rawValue)]
+            touch.allowedPressTypes = []
+            addGestureRecognizer(touch)
         }
-
         required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
-
-        @objc private func swiped(_ gesture: UISwipeGestureRecognizer) {
-            guard gesture.state == .ended else { return }
-            switch gesture.direction {
-            case .left: onPrevious?()
-            case .right: onNext?()
-            default: onShowControls?()
-            }
+        override func didUpdateFocus(in context: UIFocusUpdateContext, with coordinator: UIFocusAnimationCoordinator) {
+            super.didUpdateFocus(in: context, with: coordinator)
+            if isFocused { becomeFirstResponder() } else { resignFirstResponder(); input.reset() }
         }
-
-        @objc private func selected() { onShowControls?() }
+        override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+            var unhandled = presses
+            for press in presses where press.key == nil {
+                let command: PlaybackInputCommand?
+                switch press.type {
+                case .leftArrow: command = .previous
+                case .rightArrow: command = .next
+                case .upArrow: command = .backward
+                case .downArrow: command = .forward
+                case .select: command = .toggle
+                default: command = nil
+                }
+                if let command {
+                    unhandled.remove(press)
+                    if let result = input.press(ObjectIdentifier(press).hashValue, command: command) { onCommand?(result) }
+                }
+            }
+            if !unhandled.isEmpty { super.pressesBegan(unhandled, with: event) }
+        }
+        override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+            presses.forEach { input.release(ObjectIdentifier($0).hashValue) }
+            super.pressesEnded(presses, with: event)
+        }
+        override func pressesCancelled(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+            presses.forEach { input.release(ObjectIdentifier($0).hashValue) }
+            super.pressesCancelled(presses, with: event)
+        }
+        @objc private func swiped(_ gesture: RemoteTouch) {
+            if let command = gesture.command { onCommand?(command) }
+        }
     }
-
-    func makeUIView(context: Context) -> InputView {
-        let view = InputView()
-        updateUIView(view, context: context)
-        return view
+    final class RemoteTouch: UIGestureRecognizer {
+        weak var owner: InputView?
+        var start: CGPoint?
+        var command: PlaybackInputCommand?
+        override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
+            guard start == nil, touches.count == 1, let touch = touches.first else { state = .failed; return }
+            start = touch.location(in: view); owner?.input.touchBegan()
+        }
+        override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent) {
+            guard let start, let point = touches.first?.location(in: view) else { state = .failed; return }
+            let dx = point.x - start.x, dy = point.y - start.y
+            let direction: PlaybackInputCommand? = max(abs(dx), abs(dy)) < 12 ? nil
+                : abs(dx) > abs(dy) ? (dx < 0 ? .previous : .next) : (dy < 0 ? .backward : .forward)
+            command = owner?.input.touchEnded(command: direction)
+            state = command == nil ? .failed : .recognized
+        }
+        override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent) { _ = owner?.input.touchEnded(command: nil); state = .cancelled }
+        override func reset() { super.reset(); start = nil; command = nil }
     }
-
-    func updateUIView(_ view: InputView, context: Context) {
-        view.onPrevious = onPrevious
-        view.onNext = onNext
-        view.onShowControls = onShowControls
-        view.accessibilityValue = currentName
-    }
-
-    static func dismantleUIView(_ view: InputView, coordinator: ()) {
-        view.onPrevious = nil
-        view.onNext = nil
-        view.onShowControls = nil
-    }
+    func makeUIView(context: Context) -> InputView { InputView() }
+    func updateUIView(_ view: InputView, context: Context) { view.onCommand = onCommand; view.accessibilityValue = currentName }
+    static func dismantleUIView(_ view: InputView, coordinator: ()) { view.onCommand = nil; view.input.reset() }
 }

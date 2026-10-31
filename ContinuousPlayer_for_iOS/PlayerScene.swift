@@ -33,12 +33,6 @@ struct PlayerScene<Home: View>: View {
         .playbackSceneLifecycle(session: model.session, onEnd: model.home)
         #if os(tvOS)
         .onExitCommand(perform: exitAction)
-        .onPlayPauseCommand {
-            guard model.selection == nil, !model.playback.isPresenting, !model.playback.showsFailure, model.showsPlayer, !model.isPreparingSelection else { return }
-            if model.playback.state.wantsToPlay { model.playback.pause() }
-            else if model.playback.failure != nil { model.retryPlayback() }
-            else { model.playback.resume() }
-        }
         #else
         .task { await model.startFixturesIfRequested() }
         #endif

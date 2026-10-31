@@ -22,6 +22,8 @@ struct CatalystPlaybackTitlebar: UIViewControllerRepresentable {
         private static let folderID = NSToolbarItem.Identifier("playback.folder")
         private static let infoID = NSToolbarItem.Identifier("playback.info")
         private static let playID = NSToolbarItem.Identifier("playback.playPause")
+        private let toolbarIdentifier = "ContinuousPlayer.Playback.\(UUID().uuidString)"
+        private let keyboardBridge = MacPlaybackWindowPolicy.makeBridge()
         private weak var scene: UIWindowScene?
         private var previousTitle = "ContinuousPlayer"
         private var appliedTitle: String?
@@ -30,7 +32,7 @@ struct CatalystPlaybackTitlebar: UIViewControllerRepresentable {
         private var previousAutoHide = false
 
         private lazy var playbackToolbar: NSToolbar = {
-            let toolbar = NSToolbar(identifier: "ContinuousPlayer.Playback")
+            let toolbar = NSToolbar(identifier: NSToolbar.Identifier(toolbarIdentifier))
             toolbar.delegate = self
             toolbar.displayMode = .iconOnly
             toolbar.allowsUserCustomization = false
@@ -71,6 +73,17 @@ struct CatalystPlaybackTitlebar: UIViewControllerRepresentable {
             windowScene.title = title
             appliedTitle = title
             for item in playbackToolbar.items { configure(item) }
+            keyboardBridge?.setPlaybackToolbarIdentifier(toolbarIdentifier)
+            keyboardBridge?.preparePlaybackToolbar { [weak self] identifier in
+                guard let self, self.view.window?.isKeyWindow == true, let config = self.configuration, config.actionsEnabled else { return }
+                switch identifier {
+                case "playback.home": config.home()
+                case "playback.folder": config.chooseFolder()
+                case "playback.info": config.showInfo()
+                case "playback.playPause": if config.playbackEnabled { config.togglePlayback() }
+                default: break
+                }
+            }
         }
 
         func restoreTitlebar(restoringHome: Bool = false) {

@@ -13,8 +13,8 @@ struct PlayerScreen: View {
     @State private var outputSummary = ""
     @State private var sheet: DetailSheet?
     @State private var infoPresentation: PlaybackController.PresentationSnapshot?
-    @State private var volumeFeedbackID = 0
-    @State private var showsVolume = false
+    @State private var commands = 0
+    @State private var focusRevision = 0
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.isEnabled) private var isEnabled
     @Environment(\.accessibilityVoiceOverEnabled) private var voiceOver
@@ -33,29 +33,11 @@ struct PlayerScreen: View {
             let portrait = geometry.size.height > geometry.size.width
             VStack(spacing: 0) {
                 ZStack {
-                    PlaybackSurface(
-                        player: playback.player,
-                        keyboardEnabled: isEnabled && !browsingFiles && sheet == nil && !playback.showsFailure && scenePhase == .active,
-                        onPrevious: { playback.move(-1) },
-                        onNext: { playback.move(1) },
-                        onTogglePlayback: toggle,
-                        onSeekBackward: { playback.seek(by: -10) },
-                        onSeekForward: { playback.seek(by: 10) },
-                        onShowInfo: openInfo,
-                        onVolumeUp: { adjustVolume(by: 5) },
-                        onVolumeDown: { adjustVolume(by: -5) },
-                        onBrowseFiles: chooseFolder
-                    )
+                    PlaybackSurface(player: playback.player, enabled: acceptsInput, focusRevision: focusRevision,
+                                    playing: playback.state.wantsToPlay, canSeek: playback.canSeek,
+                                    onCommand: perform)
                     if ["mp3", "flac", "m4a", "aac", "wav", "ogg", "opus"].contains(playback.state.currentURL?.pathExtension.lowercased() ?? "") {
-                        Image(systemName: "waveform").font(.system(size: 72)).foregroundStyle(.cyan.opacity(0.65)).accessibilityHidden(true)
-                    }
-                    touchControls
-                        .allowsHitTesting(!browsingFiles && sheet == nil)
-                    if showsVolume {
-                        Label("再生音量 \(playback.volumePercent)%", systemImage: playback.volumePercent == 0 ? "speaker.slash.fill" : "speaker.wave.2.fill")
-                            .font(.headline.monospacedDigit())
-                            .padding().background(.black.opacity(0.8), in: RoundedRectangle(cornerRadius: 12))
-                            .allowsHitTesting(false)
+                        Image(systemName: "waveform").font(.system(size: 72)).foregroundStyle(.cyan.opacity(0.65)).accessibilityHidden(true).allowsHitTesting(false)
                     }
                     if playback.isLoading || playback.isBuffering {
                         ProgressView(playback.isLoading ? "再生準備中" : "バッファリング中")
@@ -104,6 +86,12 @@ struct PlayerScreen: View {
         .background(.black).foregroundStyle(.white).preferredColorScheme(.dark)
         #if DEBUG
         .overlay(alignment: .bottomLeading) { PlaybackSessionStatus(playback: playback) }
+        .overlay(alignment: .bottomTrailing) {
+            if ProcessInfo.processInfo.arguments.contains("--ui-session-state") {
+                Text(verbatim: "commands=\(commands)")
+                    .font(.caption2).accessibilityIdentifier("player.inputState").allowsHitTesting(false)
+            }
+        }
         #endif
         #if targetEnvironment(macCatalyst)
         .background {
@@ -123,10 +111,10 @@ struct PlayerScreen: View {
         .onChange(of: scenePhase, initial: true) { _, phase in
             UIApplication.shared.isIdleTimerDisabled = phase == .active
         }
-        .task(id: volumeFeedbackID) {
-            guard showsVolume else { return }
-            do { try await Task.sleep(for: .seconds(1.5)) } catch { return }
-            showsVolume = false
+        .background {
+            PlaybackMediaCommands(player: playback.player, name: playback.currentName,
+                                  enabled: acceptsInput, onCommand: perform)
+                .frame(width: 0, height: 0)
         }
         .onAppear(perform: refreshOutput)
         .onReceive(NotificationCenter.default.publisher(for: AVAudioSession.routeChangeNotification)) { _ in refreshOutput() }
@@ -176,28 +164,6 @@ struct PlayerScreen: View {
         .padding(.top, 8).background(.white.opacity(0.08))
     }
 
-    private var touchControls: some View {
-        HStack(spacing: 0) {
-            touchRegion("10秒戻す") { playback.seek(by: -10) }.disabled(!playback.canSeek)
-            touchRegion(playback.state.wantsToPlay ? "一時停止" : "再生", action: toggle)
-            touchRegion("10秒進める") { playback.seek(by: 10) }.disabled(!playback.canSeek)
-        }
-        .highPriorityGesture(DragGesture(minimumDistance: 35).onEnded { value in
-            guard abs(value.translation.width) > 70,
-                  abs(value.translation.width) > abs(value.translation.height) * 1.5 else { return }
-            playback.move(value.translation.width < 0 ? 1 : -1)
-        })
-    }
-
-    private func touchRegion(_ label: String, action: @escaping () -> Void) -> some View {
-        Color.clear.contentShape(Rectangle())
-            .onTapGesture(count: 2, perform: action)
-            .onTapGesture(perform: action)
-            .accessibilityLabel(label)
-            .accessibilityAddTraits(.isButton)
-            .accessibilityAction { action() }
-    }
-
     private var transport: some View {
         HStack {
             control("前のファイル", "backward.end.fill") { playback.move(-1) }.disabled(!playback.state.canGoBack || playback.needsFolderSelection)
@@ -216,10 +182,16 @@ struct PlayerScreen: View {
         PlayerControl(label: label, symbol: symbol, action: action)
     }
 
-    private func adjustVolume(by percentagePoints: Int) {
-        playback.adjustVolume(by: percentagePoints)
-        showsVolume = true
-        volumeFeedbackID += 1
+    private var acceptsInput: Bool {
+        isEnabled && !browsingFiles && sheet == nil && !playback.showsFailure && scenePhase == .active
+    }
+    private func perform(_ command: PlaybackInputCommand) {
+        guard acceptsInput else { return }
+        #if DEBUG
+        commands += 1
+        #endif
+        PlaybackInputActions(playback: playback, retry: retry, browse: chooseFolder,
+                             info: openInfo, home: home).perform(command)
     }
 
     private func openInfo() {
@@ -231,12 +203,11 @@ struct PlayerScreen: View {
     private func closeInfo() {
         if let infoPresentation { playback.endPresentation(infoPresentation) }
         infoPresentation = nil
+        focusRevision += 1
     }
 
     private func toggle() {
-        if playback.state.wantsToPlay { playback.pause() }
-        else if playback.failure != nil { retry() }
-        else { playback.resume() }
+        perform(.toggle)
     }
 
     private func refreshOutput() {
@@ -258,7 +229,7 @@ private struct PlayerControl: View {
                 .frame(minWidth: 44, minHeight: 44)
                 .opacity(isEnabled ? 1 : 0.3)
         }
-        .buttonStyle(.borderless).accessibilityLabel(label)
+        .buttonStyle(.borderless).keyboardAction(action).accessibilityLabel(label)
     }
 }
 

@@ -22,18 +22,22 @@ struct PlaybackFailurePanel: View {
                         Text("再試行位置: \(String(format: "%.1f", failure.seconds))秒")
                             .font(.caption).foregroundStyle(.secondary)
                         Button("再試行", action: retry)
+                            .keyboardAction(retry)
                             .disabled(!playback.canRetry)
                             .focused($focus, equals: .retry)
                             .accessibilityIdentifier("player.error.retry")
                         if playback.state.canGoForward {
                             Button("次のファイル", action: playback.nextAfterFailure)
+                                .keyboardAction(playback.nextAfterFailure)
                                 .focused($focus, equals: .next)
                                 .accessibilityIdentifier("player.error.next")
                         }
                         Button("ファイル一覧") { playback.dismissFailure(); browse() }
+                            .keyboardAction { playback.dismissFailure(); browse() }
                             .focused($focus, equals: .browse)
                             .accessibilityIdentifier("player.error.browse")
                         Button("閉じる", action: playback.dismissFailure)
+                            .keyboardAction(playback.dismissFailure)
                             .focused($focus, equals: .close)
                             .accessibilityIdentifier("player.error.close")
                     }
@@ -51,7 +55,7 @@ struct PlaybackFailurePanel: View {
         #if os(tvOS)
         .onExitCommand(perform: playback.dismissFailure)
         #else
-        .background(ModalDismissKeyboardCommands(inputs: [UIKeyCommand.inputEscape], close: playback.dismissFailure))
+        .modifier(ModalDismissKeys(inputs: ["escape"], close: playback.dismissFailure))
         #endif
     }
     private var panelWidth: CGFloat {
@@ -63,33 +67,19 @@ struct PlaybackFailurePanel: View {
     }
 }
 
-/// Keep modal dismissal on its own responder; transport keys stay with the UI.
-struct ModalDismissKeyboardCommands: UIViewControllerRepresentable {
-    var inputs = ["i", UIKeyCommand.inputEscape]
+/// Only a fresh key-down dismisses a modal. Repeats from the key that opened
+/// it are consumed without closing it or leaking back into the player.
+struct ModalDismissKeys: ViewModifier {
+    var inputs = ["i", "escape"]
     let close: () -> Void
-    final class Controller: UIViewController {
-        var close: (() -> Void)?
-        var inputs: [String] = []
-        override var canBecomeFirstResponder: Bool { true }
-        override var keyCommands: [UIKeyCommand]? {
-            inputs.map { input in
-                let command = UIKeyCommand(input: input, modifierFlags: [], action: #selector(closeModal))
-                command.wantsPriorityOverSystemBehavior = true
-                return command
-            }
+    func body(content: Content) -> some View {
+        content.onKeyPress(keys: [.escape, "i"], phases: [.down, .repeat]) { key in
+            guard !key.hasCommandModifiers, inputs.contains(key.inputName) else { return .ignored }
+            #if targetEnvironment(macCatalyst)
+            if key.inputName == "escape" && MacPlaybackWindowPolicy.fullScreenOwnsEscape { return .ignored }
+            #endif
+            if key.phase == .down { close() }
+            return .handled
         }
-        override func viewDidAppear(_ animated: Bool) { super.viewDidAppear(animated); becomeFirstResponder() }
-        override func viewWillDisappear(_ animated: Bool) { resignFirstResponder(); super.viewWillDisappear(animated) }
-        @objc private func closeModal() { close?() }
-    }
-    func makeUIViewController(context: Context) -> Controller {
-        let controller = Controller()
-        controller.view.isUserInteractionEnabled = false
-        controller.close = close; controller.inputs = inputs
-        return controller
-    }
-    func updateUIViewController(_ controller: Controller, context: Context) { controller.close = close; controller.inputs = inputs }
-    static func dismantleUIViewController(_ controller: Controller, coordinator: ()) {
-        controller.resignFirstResponder(); controller.close = nil
     }
 }

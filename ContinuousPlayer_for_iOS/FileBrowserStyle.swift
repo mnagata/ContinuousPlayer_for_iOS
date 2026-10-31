@@ -3,22 +3,13 @@ import SwiftUI
 /// Keeps local and DLNA folder/file dialogs visually consistent.
 extension View {
     @ViewBuilder
-    func fileBrowserBackShortcut(enabled: Bool, action: @escaping () -> Void) -> some View {
+    func fileBrowserKeyboardFocusable() -> some View {
         #if os(tvOS)
         self
         #else
-        self.background {
-            // A keyboard shortcut works without moving focus away from the file list.
-            Button("上のフォルダー", action: action)
-                .keyboardShortcut(.delete, modifiers: [])
-                .disabled(!enabled)
-                .hidden()
-                .frame(width: 0, height: 0)
-                .accessibilityHidden(true)
-        }
+        self.focusable(interactions: .edit)
         #endif
     }
-
     @ViewBuilder
     func fileBrowserCancelShortcut() -> some View {
         #if targetEnvironment(macCatalyst)

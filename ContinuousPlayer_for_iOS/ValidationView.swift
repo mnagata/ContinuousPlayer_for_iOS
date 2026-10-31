@@ -21,7 +21,7 @@ struct ValidationView: View {
                     if let error = probe.error { Text(error).foregroundStyle(.red) }
                 }.disabled(probe.busy)
                 Section("再生確認") {
-                    PlaybackSurface(player: probe.busy ? probe.player : probe.playback.player).frame(height: 240)
+                    PlaybackSurface(player: probe.busy ? probe.player : probe.playback.player, enabled: false, onCommand: { _ in }).frame(height: 240)
                     Text(probe.busy ? probe.currentName : probe.playback.currentName)
                     HStack {
                         Button("再生") { probe.playback.resume() }
