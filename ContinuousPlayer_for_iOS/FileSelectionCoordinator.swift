@@ -47,6 +47,12 @@ enum SelectionFolder: Hashable {
             return .dlna(server: server, root: root, path: Array(path.dropLast()), adding: adding)
         }
     }
+    var rowIDInParent: String? {
+        switch self {
+        case .local(_, let directory): directory.standardizedFileURL.path
+        case .dlna(let server, _, let path, _): path.last.map { server.id + "|" + $0.id }
+        }
+    }
 }
 
 struct MediaSelection {
@@ -215,7 +221,12 @@ final class FileSelectionCoordinator {
         case .sources: showSaved()
         case .servers: page = .sources
         case .folder(let folder):
-            if let parent = folder.parent { load(parent) }
+            if let parent = folder.parent {
+                // A list opened from playback may never have visited its parent.
+                // Returning always selects the directory we are leaving.
+                lastSelections[parent.identity] = folder.rowIDInParent
+                load(parent)
+            }
             else if folder.isAdding { page = .servers; rows = [] }
             else { showSaved() }
         }
@@ -291,7 +302,9 @@ final class FileSelectionCoordinator {
     private func accepts(_ token: Int) -> Bool { !isClosed && !Task.isCancelled && requestRevision == token }
     private func apply(_ result: [SelectionRow], folder: SelectionFolder) {
         cache[folder] = result; rows = result; page = .folder(folder)
-        selectedRowID = lastSelections[folder.identity] ?? result.first?.id
+        selectedRowID = lastSelections[folder.identity].flatMap { id in
+            result.contains(where: { $0.id == id }) ? id : nil
+        } ?? result.first?.id
         isLoading = false; showsLoading = false; indicator?.cancel(); focusRevision += 1
     }
     private func fail(_ error: Error, token: Int) {

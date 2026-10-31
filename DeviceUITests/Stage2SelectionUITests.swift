@@ -69,6 +69,40 @@ final class Stage2SelectionUITests: XCTestCase {
         app.buttons["ホームに戻る"].tap()
         XCTAssertTrue(app.buttons["home.select"].waitForExistence(timeout: 5))
     }
+    func testBackFromPlaybackRevealsDepartedDirectoryInLongList() {
+        let app = launch(); defer { app.terminate() }
+        add(app, nested: false)
+        let saved = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'saved.dlna.'")).firstMatch
+        saved.tap()
+        let folder = app.buttons["dlna.folder.folder-0"]
+        XCTAssertTrue(folder.waitForExistence(timeout: 15)); folder.tap()
+        let child = app.buttons["dlna.folder.child-24"]
+        let list = app.collectionViews["picker.customList"]
+        for _ in 0..<12 {
+            if child.isHittable { break }
+            list.swipeUp()
+        }
+        XCTAssertTrue(child.isHittable); child.tap()
+        let op = app.buttons["作品 OP.mp4から連続再生"]
+        XCTAssertTrue(op.waitForExistence(timeout: 15)); op.tap()
+        state(app, "作品 OP.mp4", playing: true)
+        app.buttons["player.video"].tap()
+        state(app, "作品 OP.mp4", playing: false)
+        app.buttons["ファイル一覧"].tap()
+        XCTAssertTrue(op.waitForExistence(timeout: 15))
+        app.buttons["selection.back"].tap()
+        let revealed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            child.isSelected && child.isHittable
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [revealed], timeout: 10), .completed,
+                       "Back selects and scrolls to the departed directory in an unvisited parent")
+        app.buttons["selection.back"].tap()
+        XCTAssertTrue(folder.waitForExistence(timeout: 15))
+        XCTAssertTrue(folder.isSelected && folder.isHittable)
+        app.buttons["selection.back"].tap()
+        XCTAssertTrue(saved.waitForExistence(timeout: 10))
+        XCTAssertTrue(saved.isSelected && saved.isHittable)
+    }
     func testSlowReloadRetainsRowsAndBackCancelsWholeFlow() throws {
         let app = launch(); defer { app.terminate() }
         add(app, nested: true)

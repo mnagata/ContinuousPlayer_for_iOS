@@ -79,6 +79,35 @@ import AVFoundation
         registrations.removeDLNA(extra)
         print("PASS: registration upsert; bounded DLNA root; parent selection; shared-URL object identity")
 
+        let nestedPath = rootPath + [RegisteredDLNAPath(id: childEntry.id, title: childEntry.title)]
+        let nested = SelectionFolder.dlna(server: server, root: rootPath, path: nestedPath, adding: false)
+        let returning = FileSelectionCoordinator(origin: .playback, registrations: registrations,
+            browse: { folder in folder.identity == root.identity ? [a, child, b] : [a, b] },
+            choose: { _ in }, cancelled: {})
+        returning.openCurrent(nested, rowID: b.id)
+        await wait { !returning.isLoading }
+        let revision = returning.focusRevision
+        returning.back()
+        await wait { !returning.isLoading }
+        expect(returning.page == .folder(root) && returning.selectedRowID == child.id,
+               "back from playback selects the departed DLNA directory without parent history")
+        expect(returning.focusRevision > revision, "return requests scrolling to the directory selection")
+        returning.openCurrent(root, rowID: b.id)
+        returning.openCurrent(nested, rowID: a.id)
+        await wait { !returning.isLoading }
+        returning.back()
+        expect(returning.selectedRowID == child.id, "cached parent also selects the departed directory")
+        returning.finish()
+        let removedDirectory = FileSelectionCoordinator(origin: .playback, registrations: registrations,
+            browse: { _ in [a, b] }, choose: { _ in }, cancelled: {})
+        removedDirectory.openCurrent(nested, rowID: b.id)
+        await wait { !removedDirectory.isLoading }
+        removedDirectory.back()
+        await wait { !removedDirectory.isLoading }
+        expect(removedDirectory.selectedRowID == a.id, "missing departed directory falls back to an existing row")
+        removedDirectory.finish()
+        print("PASS: playback directory return selects and reveals its DLNA parent row, with and without cache")
+
         let second = registrations.addDLNA(server: server, path: [RegisteredDLNAPath(id: "second", title: "ZZ Second")])
         let removal = FileSelectionCoordinator(origin: .home, registrations: registrations, browse: { _ in throw DLNAError.message("offline") }, choose: { _ in }, cancelled: {})
         removal.removeDLNA(saved)
@@ -132,6 +161,21 @@ import AVFoundation
         expect(sourceFlow.page == .saved && !sourceFlow.isClosed, "add Back returns saved list")
         let localFolder = SelectionFolder.local(root: localRoot, directory: localRoot)
         expect(localFolder.parent == nil, "local root bounded")
+        let localChildURL = localRoot.appendingPathComponent("Other Folder", isDirectory: true)
+        let localChild = SelectionRow(id: localChildURL.standardizedFileURL.path, name: "Other Folder", isFolder: true,
+                                     url: localChildURL, remote: nil)
+        let localReturning = FileSelectionCoordinator(origin: .playback, registrations: registrations,
+            browse: { folder in folder.identity == localFolder.identity ? [a, localChild, b] : [a, b] },
+            choose: { _ in }, cancelled: {})
+        localReturning.openCurrent(.local(root: localRoot, directory: localChildURL), rowID: b.id)
+        await wait { !localReturning.isLoading }
+        localReturning.back()
+        await wait { !localReturning.isLoading }
+        expect(localReturning.page == .folder(localFolder) && localReturning.selectedRowID == localChild.id,
+               "back from playback selects the departed local directory without parent history")
+        localReturning.back()
+        expect(localReturning.selectedSavedID == "saved.local.\(local.id)", "local root return selects its registration")
+        localReturning.finish()
         let localRows = try await FileSelectionCoordinator.readFolder(localFolder)
         expect(localRows.contains { $0.isFolder } && localRows.contains { !$0.isFolder }, "real local coordinated browse")
         print("PASS: local duplicate/update, selected registration, add cancellation and coordinated browse")
