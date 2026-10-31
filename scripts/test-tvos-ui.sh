@@ -20,6 +20,6 @@ while [ ! -f "$output/port" ]; do
 done
 xcodebuild -project ContinuousPlayer_for_iOS.xcodeproj -scheme ContinuousPlayer_for_tvOS \
     -destination "platform=tvOS Simulator,id=$SIMULATOR_ID" \
-    -derivedDataPath /tmp/ContinuousPlayer-tvOS \
+    -derivedDataPath "${DERIVED_DATA_PATH:-/tmp/ContinuousPlayer-tvOS}" \
     -only-testing:"${ONLY_TESTING:-TVUITests}" \
     -parallel-testing-enabled NO test CODE_SIGNING_ALLOWED=NO

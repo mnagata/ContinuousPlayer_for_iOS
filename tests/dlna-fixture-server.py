@@ -50,10 +50,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.server.next_delay = min(8, max(0, float(parse_qs(urlparse(self.path).query).get('seconds', ['0'])[0])))
             self.reply(b'OK', mime='text/plain')
             return
-        if urlparse(self.path).path in ('/description.xml', '/desc/device.xml', '/folders.xml'):
+        if urlparse(self.path).path in ('/description.xml', '/desc/device.xml', '/folders.xml', '/names.xml', '/audio.xml'):
             text = '<root xmlns="urn:schemas-upnp-org:device-1-0"><device><deviceType>urn:schemas-upnp-org:device:MediaServer:1</deviceType><friendlyName>Fixture NAS</friendlyName><UDN>uuid:fixture</UDN><serviceList><service><serviceType>urn:schemas-upnp-org:service:ContentDirectory:1</serviceType><controlURL>/control</controlURL></service></serviceList></device></root>'
             if urlparse(self.path).path == '/folders.xml':
                 text = text.replace('>/control<', '>/control-folders<')
+            if urlparse(self.path).path == '/names.xml':
+                text = text.replace('>/control<', '>/control-names<')
+            if urlparse(self.path).path == '/audio.xml':
+                text = text.replace('>/control<', '>/control-audio<')
             self.reply(text.encode())
         elif urlparse(self.path).path == '/management':
             self.reply(b'<html><body>DSM login</body></html>', mime='text/html')
@@ -61,9 +65,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.reply(b'Forbidden', 403)
         elif urlparse(self.path).path == '/unavailable':
             self.reply(b'Unavailable', 503)
-        elif urlparse(self.path).path == '/stream':
-            data = media.read_bytes()
-            mime = 'video/mp4' if media.suffix in ('.mp4', '.m4v') else 'audio/wav'
+        elif urlparse(self.path).path in ('/stream', '/audio-stream'):
+            source = media.parent / 'Audio Only OP.mp4' if urlparse(self.path).path == '/audio-stream' else media
+            data = source.read_bytes()
+            mime = 'video/mp4' if source.suffix in ('.mp4', '.m4v') else 'audio/wav'
             size = len(data)
             if self.headers.get('Range', '').startswith('bytes='):
                 start, end = self.headers['Range'][6:].split('-', 1)
@@ -101,7 +106,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.reply(b'<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/"><s:Body><s:Fault><faultstring>UPnPError</faultstring><detail><UPnPError><errorDescription>No Such Object</errorDescription></UPnPError></detail></s:Fault></s:Body></s:Envelope>', 500)
             return
         update = 2 if identifier == 'changed' and start else 1
-        if self.path == '/control-folders':
+        if self.path == '/control-audio':
+            content = '<item id="audio-op"><dc:title>音声.01</dc:title><res protocolInfo="http-get:*:video/mp4:*" size="1920044">/audio-stream</res></item>'
+            returned = total = 1
+        elif self.path == '/control-names':
+            titles = [('op', '作品.01 OP.mp4'), ('ed', '作品.01 OP.m4v')]
+            content = ''.join(f'<item id="{key}"><dc:title>{title}</dc:title><res protocolInfo="http-get:*:video/mp4:*" size="1234">/stream?id={key}</res></item>' for key, title in titles)
+            returned = total = len(titles)
+        elif self.path == '/control-folders':
             # Long, nested lists exercise restoration beyond the initial viewport.
             if identifier == '0':
                 content = ''.join(f'<container id="folder-{i}"><dc:title>Folder {i:02}</dc:title></container>' for i in range(35))

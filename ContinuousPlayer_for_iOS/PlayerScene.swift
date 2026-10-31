@@ -10,7 +10,7 @@ struct PlayerScene<Home: View>: View {
             else if !model.showsPlayer { Color.black.ignoresSafeArea() }
             if model.showsPlayer {
                 player
-                    .background(.black).ignoresSafeArea()
+                    .background(.black)
                     .accessibilityElement(children: .contain)
                     .accessibilityHidden(model.selection != nil || model.isPreparingSelection)
                     .allowsHitTesting(model.selection == nil && !model.isPreparingSelection)
@@ -54,9 +54,11 @@ struct PlayerScene<Home: View>: View {
                        home: model.home, chooseFolder: model.openSelection, retry: model.retryPlayback, browsingFiles: model.selection != nil)
         #else
         PlayerScreen(playback: model.playback, folderName: model.folderName,
-                     home: model.home, chooseFolder: model.openSelection, retry: model.retryPlayback, browsingFiles: model.selection != nil)
+                     home: model.home, chooseFolder: model.openSelection, retry: model.retryPlayback, browsingFiles: model.selection != nil,
+                     onWindowMinimizedChange: { model.session.setBlocked("window-minimized", $0) })
         #endif
     }
+
     #if os(tvOS)
     private var exitAction: (() -> Void)? {
         // Selection and information own Back while they are on top.

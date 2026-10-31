@@ -31,6 +31,9 @@ def main():
     subprocess.run([ffmpeg, '-hide_banner', '-loglevel', 'error', '-y', '-f', 'lavfi',
                     '-i', 'sine=frequency=880:sample_rate=48000', '-t', str(args.duration),
                     '-c:a', 'pcm_s16le', str(args.output / 'Audio OP.wav')], check=True)
+    subprocess.run([ffmpeg, '-hide_banner', '-loglevel', 'error', '-y',
+                    '-i', str(args.output / 'Fixture OP.mp4'), '-vn', '-c:a', 'copy',
+                    '-movflags', '+faststart', str(args.output / 'Audio Only OP.mp4')], check=True)
     (args.output / 'Corrupt OP.mp4').write_bytes(b'intentionally invalid common-spec media\n')
     nested = args.output / 'Other Folder'
     nested.mkdir(exist_ok=True)

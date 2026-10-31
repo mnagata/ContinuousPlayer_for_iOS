@@ -5,6 +5,9 @@ struct MediaInfo {
     var size = "取得できません"
     var video = "取得できません"
     var audio = "取得できません"
+    var hasVideo: Bool?
+    var hasAudio: Bool?
+    var isAudioOnly: Bool { hasVideo == false && hasAudio == true }
 
     static func load(_ url: URL, asset: AVAsset) async -> MediaInfo {
         var info = MediaInfo(name: url.lastPathComponent)
@@ -17,6 +20,7 @@ struct MediaInfo {
         }
         do {
             if let track = try await asset.loadTracks(withMediaType: .video).first {
+                info.hasVideo = true
                 let size = try await track.load(.naturalSize)
                 let transform = try await track.load(.preferredTransform)
                 let display = size.applying(transform)
@@ -26,11 +30,12 @@ struct MediaInfo {
                     ? "\(Int(abs(display.width))) × \(Int(abs(display.height)))" : "解像度: 取得できません"
                 let frameRate = fps.isFinite && fps > 0 ? "\(String(format: "%.2f", fps)) fps" : "fps: 取得できません"
                 info.video = "\(formats.first.map(codec) ?? "取得できません") · \(resolution) · \(frameRate)"
-            } else { info.video = "映像なし" }
+            } else { info.hasVideo = false; info.video = "映像なし" }
         } catch { /* A video failure must not hide independently available audio. */ }
         guard !Task.isCancelled else { return info }
         do {
             if let track = try await asset.loadTracks(withMediaType: .audio).first {
+                info.hasAudio = true
                 let formats = try await track.load(.formatDescriptions)
                 if let format = formats.first {
                     info.audio = codec(format)
@@ -41,7 +46,7 @@ struct MediaInfo {
                         info.audio += " · \(rate) · \(channels)"
                     }
                 }
-            } else { info.audio = "音声なし" }
+            } else { info.hasAudio = false; info.audio = "音声なし" }
         } catch { /* Keep independently available file information. */ }
         return info
     }

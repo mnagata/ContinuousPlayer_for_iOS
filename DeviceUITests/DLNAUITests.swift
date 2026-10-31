@@ -61,8 +61,8 @@ final class DLNAUITests: XCTestCase {
         XCTAssertTrue(file.waitForExistence(timeout: 15))
 
         file.tap()
-        XCTAssertTrue(app.staticTexts["最後まで再生しました"].waitForExistence(timeout: 20))
-        app.buttons["OP / EDを選び直す"].tap()
+        XCTAssertTrue(app.staticTexts["このフォルダーの再生が終了しました。"].waitForExistence(timeout: 20))
+        app.buttons["ファイル一覧"].tap()
         XCTAssertTrue(file.waitForExistence(timeout: 10), "Open the currently playing folder")
         XCTAssertEqual(app.buttons["selection.back"].label, "保存済みフォルダー")
         app.buttons["selection.back"].tap()
@@ -147,16 +147,16 @@ final class DLNAUITests: XCTestCase {
         listing.lifetime = .keepAlways
         add(listing)
         file.tap()
-        XCTAssertTrue(app.staticTexts["最後まで再生しました"].waitForExistence(timeout: 20))
+        XCTAssertTrue(app.staticTexts["このフォルダーの再生が終了しました。"].waitForExistence(timeout: 20))
         XCTAssertTrue(app.staticTexts["作品 ED.mp4"].firstMatch.exists)
         let playback = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
         playback.name = "dlna-playback"
         playback.lifetime = .keepAlways
         add(playback)
-        app.buttons["OP / EDを選び直す"].tap()
+        app.buttons["ファイル一覧"].tap()
         XCTAssertTrue(file.waitForExistence(timeout: 5), "Return to the same DLNA folder")
         file.tap()
-        XCTAssertTrue(app.staticTexts["最後まで再生しました"].waitForExistence(timeout: 20))
+        XCTAssertTrue(app.staticTexts["このフォルダーの再生が終了しました。"].waitForExistence(timeout: 20))
         app.buttons["ホームに戻る"].tap()
         XCTAssertTrue(app.buttons["home.select"].waitForExistence(timeout: 5))
         app.launchArguments.removeAll { $0 == "--ui-reset-registrations" }

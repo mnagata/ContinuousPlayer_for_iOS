@@ -64,7 +64,7 @@ final class Stage4InputUITests: XCTestCase {
         state(app, name: "作品 OP.mp4", playing: true)
         video.tap()
         state(app, name: "作品 OP.mp4", playing: false)
-        app.buttons["OP / EDを選び直す"].tap()
+        app.buttons["ファイル一覧"].tap()
         let ed = app.buttons["作品 ED.mp4から連続再生"]
         XCTAssertTrue(ed.waitForExistence(timeout: 10)); ed.press(forDuration: 1)
         XCTAssertTrue(ed.exists, "File long press must not play or show information")

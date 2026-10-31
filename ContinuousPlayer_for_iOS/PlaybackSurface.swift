@@ -9,6 +9,13 @@ protocol MacPlaybackPointer: NSObjectProtocol {
     func startPointer(withHandler handler: @escaping (Int, Double, Double, Double, Double, Int, Bool, Double) -> Bool)
     func stopPointer()
     func keyWindowIsFullScreen() -> Bool
+    func togglePlaybackFullScreen()
+    @objc(startPlaybackChromeWithHandler:)
+    func startPlaybackChrome(withHandler handler: @escaping (Int, Bool) -> Void)
+    func stopPlaybackChrome()
+    func setPlaybackToolbarControlsVisible(_ visible: Bool)
+    func setPlaybackCursorHidden(_ hidden: Bool)
+    func setPlaybackToolbarExitHandler(_ handler: @escaping (Bool) -> Void)
     @objc(focusPlaybackToolbarBackwards:video:browse:activate:)
     func focusPlaybackToolbar(backwards: Bool, video: @escaping () -> Void, browse: @escaping () -> Void, activate: @escaping (String) -> Void) -> Bool
     func setPlaybackToolbarIdentifier(_ identifier: String)
@@ -35,11 +42,30 @@ struct PlaybackSurface: UIViewRepresentable {
     var focusRevision = 0
     var playing = false
     var canSeek = false
+    var cursorHidden = false
+    var onPointerActivity: () -> Void = {}
+    var onDirectTouch: () -> Void = {}
+    var onTab: (Bool) -> Void = { _ in }
     var onCommand: (PlaybackInputCommand) -> Void
 
     final class Surface: UIView {
         override class var layerClass: AnyClass { AVPlayerLayer.self }
         var playerLayer: AVPlayerLayer { layer as! AVPlayerLayer }
+        #if targetEnvironment(macCatalyst) && DEBUG
+        override var accessibilityValue: String? {
+            get {
+                guard ProcessInfo.processInfo.arguments.contains("--ui-session-state"), let window else {
+                    return super.accessibilityValue
+                }
+                // Read current UIKit/layer geometry on demand, without feeding
+                // layout measurements back into SwiftUI's layout state.
+                let surface = convert(bounds, to: window)
+                let video = convert(playerLayer.videoRect, to: window)
+                return "surface=\(surface)|safeTop=\(window.safeAreaInsets.top)|video=\(video)"
+            }
+            set { super.accessibilityValue = newValue }
+        }
+        #endif
         var enabled = false {
             didSet {
                 if !enabled { heldKeys.removeAll(); if isFirstResponder { resignFirstResponder() } }
@@ -85,27 +111,34 @@ struct PlaybackSurface: UIViewRepresentable {
             focusTask?.cancel()
             var remaining = presses
             for press in presses {
-                #if targetEnvironment(macCatalyst)
-                if let key = press.key, key.keyCode == .keyboardTab,
+                if enabled, isFirstResponder, let key = press.key, key.keyCode == .keyboardTab,
                    key.modifierFlags.intersection([.command, .control, .alternate]).isEmpty {
                     focusTask?.cancel()
-                    if MacPlaybackWindowPolicy.fullScreenOwnsEscape { window?.windowScene?.titlebar?.autoHidesToolbarInFullScreen = false }
+                    #if targetEnvironment(macCatalyst)
+                    if !MacPlaybackWindowPolicy.fullScreenOwnsEscape {
+                    window?.windowScene?.titlebar?.toolbar?.isVisible = true
                     resignFirstResponder()
                     if let identifier = window?.windowScene?.titlebar?.toolbar?.identifier {
                         bridge?.setPlaybackToolbarIdentifier(identifier)
                     }
+                    let moveToControls = onTab
+                    bridge?.setPlaybackToolbarExitHandler { backwards in moveToControls?(backwards) }
                     let handled = bridge?.focusPlaybackToolbar(backwards: key.modifierFlags.contains(.shift),
                        video: { [weak self] in self?.resignFirstResponder(); self?.window?.makeKey(); self?.focusKeyboard() },
                        browse: { [weak self] in self?.onCommand?(.browse) },
                        activate: { [weak self] identifier in
                            let commands: [String: PlaybackInputCommand] = ["playback.home": .home, "playback.folder": .browse,
                                "playback.info": .info, "playback.playPause": .toggle]
-                           if let command = commands[identifier] { self?.onCommand?(command) }
+                           if identifier == "playback.fullScreen" { self?.bridge?.togglePlaybackFullScreen() }
+                           else if let command = commands[identifier] { self?.onCommand?(command) }
                        }) == true
                     if handled { heldKeys.insert(.keyboardTab); remaining.remove(press); continue }
                     becomeFirstResponder()
+                    }
+                    #endif
+                    onTab?(key.modifierFlags.contains(.shift))
+                    heldKeys.insert(.keyboardTab); remaining.remove(press); continue
                 }
-                #endif
                 guard let key = press.key, let command = command(for: key) else { continue }
                 remaining.remove(press)
                 if heldKeys.insert(key.keyCode).inserted { onCommand?(command) }
@@ -123,6 +156,9 @@ struct PlaybackSurface: UIViewRepresentable {
         override func pressesCancelled(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
             heldKeys.removeAll(); super.pressesCancelled(presses, with: event)
         }
+        var onPointerActivity: (() -> Void)?
+        var onDirectTouch: (() -> Void)?
+        var onTab: ((Bool) -> Void)?
         var onCommand: ((PlaybackInputCommand) -> Void)?
         private var input = PlaybackTouchInput()
         #if targetEnvironment(macCatalyst)
@@ -169,6 +205,18 @@ struct PlaybackSurface: UIViewRepresentable {
         isolated deinit { bridge?.stopPointer() }
         #else
         private var contact: UITouch?
+        private lazy var pointer = UIPointerInteraction(delegate: self)
+        var cursorHidden = false { didSet { if oldValue != cursorHidden { pointer.invalidate() } } }
+        override init(frame: CGRect) {
+            super.init(frame: frame)
+            let hover = UIHoverGestureRecognizer(target: self, action: #selector(hovered(_:)))
+            addGestureRecognizer(hover)
+            addInteraction(pointer)
+        }
+        required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+        @objc private func hovered(_ gesture: UIHoverGestureRecognizer) {
+            if gesture.state == .began || gesture.state == .changed { onPointerActivity?() }
+        }
         override func didMoveToWindow() { super.didMoveToWindow(); focusKeyboard() }
         override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
             guard enabled, let touch = touches.first else { return }
@@ -178,6 +226,7 @@ struct PlaybackSurface: UIViewRepresentable {
                 return
             }
             guard touch.type == .direct || touch.type == .indirectPointer else { return }
+            if touch.type == .direct { onDirectTouch?() } else { onPointerActivity?() }
             contact = touch
             input.begin(at: touch.location(in: self), time: touch.timestamp,
                         source: touch.type == .direct ? .direct : .pointer,
@@ -216,6 +265,12 @@ struct PlaybackSurface: UIViewRepresentable {
         if !enabled { view.cancelContact() }
         view.enabled = enabled
         if view.focusRevision != focusRevision { view.focusRevision = focusRevision; view.requestKeyboardFocus() }
+        view.onPointerActivity = onPointerActivity
+        view.onDirectTouch = onDirectTouch
+        view.onTab = onTab
+        #if !targetEnvironment(macCatalyst)
+        view.cursorHidden = cursorHidden
+        #endif
         view.onCommand = onCommand
         view.accessibilityLabel = playing ? "一時停止" : "再生"
         let actions: [(String, PlaybackInputCommand)] = [("前のファイル", .previous), ("次のファイル", .next),
@@ -227,5 +282,13 @@ struct PlaybackSurface: UIViewRepresentable {
             }
         }
     }
-    static func dismantleUIView(_ view: Surface, coordinator: ()) { view.stop(); view.onCommand = nil; view.playerLayer.player = nil }
+    static func dismantleUIView(_ view: Surface, coordinator: ()) { view.stop(); view.onCommand = nil; view.onPointerActivity = nil; view.onDirectTouch = nil; view.onTab = nil; view.playerLayer.player = nil }
 }
+
+#if !targetEnvironment(macCatalyst)
+extension PlaybackSurface.Surface: UIPointerInteractionDelegate {
+    func pointerInteraction(_ interaction: UIPointerInteraction, styleFor region: UIPointerRegion) -> UIPointerStyle? {
+        cursorHidden ? .hidden() : nil
+    }
+}
+#endif

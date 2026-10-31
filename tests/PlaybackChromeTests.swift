@@ -1,0 +1,37 @@
+import Foundation
+
+@main struct PlaybackChromeTests {
+    @MainActor static func main() async throws {
+        precondition(MediaDisplayName.title("Episode.01.OP.MP4") == "Episode.01.OP")
+        precondition(MediaDisplayName.title("Episode.01") == "Episode.01")
+        precondition(MediaDisplayName.title("作品") == "作品")
+        precondition(MediaDisplayName.title("作品.xyz") == "作品.xyz")
+        precondition(MediaDisplayName.title(".mp4") == ".mp4")
+        precondition(MediaDisplayName.format("作品.M4V") == "M4V")
+        precondition(MediaDisplayName.format("作品.xyz") == nil)
+        let collisions = MediaDisplayName.collisions(in: ["作品.mp4", "作品.m4v", "別の作品.mp4", "作品.01.mp4"])
+        precondition(collisions == ["作品"])
+        print("PASS: known suffixes only, internal periods, opaque titles and collision badges")
+        precondition(!PlaybackChromePolicy().visible, "Playing video with no interaction hides controls")
+        precondition(PlaybackChromePolicy(paused: true).visible)
+        precondition(PlaybackChromePolicy(audioOnly: true).visible)
+        precondition(PlaybackChromePolicy(pointerAwake: true).visible)
+        precondition(PlaybackChromePolicy(hovered: true).visible)
+        precondition(PlaybackChromePolicy(focused: true).visible)
+        precondition(PlaybackChromePolicy(modal: true).visible)
+        precondition(PlaybackChromePolicy(voiceOver: true).visible)
+        print("PASS: paused/audio/pointer and focus/hover/modal/VoiceOver independently keep controls visible")
+        let chrome = PlaybackChromeState()
+        chrome.pointerMoved()
+        try await Task.sleep(for: .milliseconds(1600))
+        chrome.pointerMoved()
+        try await Task.sleep(for: .milliseconds(1600))
+        precondition(chrome.pointerAwake, "Motion extends the three-second deadline")
+        try await Task.sleep(for: .milliseconds(1600))
+        precondition(!chrome.pointerAwake, "Idle pointer expires three seconds after the last motion")
+        chrome.pointerMoved(); chrome.directTouch()
+        precondition(!chrome.pointerAwake && !chrome.usesPointer)
+        chrome.stop()
+        print("PASS: real idle timer extends after motion, expires after three seconds, and cancels for direct touch")
+    }
+}

@@ -14,6 +14,12 @@
 - (void)startPointerWithHandler:(BOOL (^)(NSInteger, double, double, double, double, NSInteger, BOOL, double))handler;
 - (void)stopPointer;
 - (BOOL)keyWindowIsFullScreen;
+- (void)togglePlaybackFullScreen;
+- (void)startPlaybackChromeWithHandler:(void (^)(NSInteger, BOOL))handler;
+- (void)stopPlaybackChrome;
+- (void)setPlaybackCursorHidden:(BOOL)hidden;
+- (void)setPlaybackToolbarControlsVisible:(BOOL)visible;
+- (void)setPlaybackToolbarExitHandler:(void (^)(BOOL))handler;
 - (void)setPlaybackToolbarIdentifier:(NSString *)identifier;
 - (void)preparePlaybackToolbarWithActivation:(void (^)(NSString *))activate;
 - (BOOL)focusPlaybackToolbarBackwards:(BOOL)backwards video:(void (^)(void))video browse:(void (^)(void))browse activate:(void (^)(NSString *))activate;
@@ -42,6 +48,11 @@ int main(int argc, const char *argv[]) {
         [NSNotificationCenter.defaultCenter postNotificationName:NSApplicationDidUnhideNotification object:nil];
         NSCAssert(events.count == 8, @"Sleep/display/session/hide each deliver both edges");
         NSCAssert(([events[0] isEqual:@[@"sleep", @YES]] && [events[2] isEqual:@[@"sleep", @NO]]), @"Sleep mapping");
+        for (NSNotificationName name in @[NSWindowWillEnterFullScreenNotification, NSWindowDidEnterFullScreenNotification,
+                                          NSWindowWillExitFullScreenNotification, NSWindowDidExitFullScreenNotification]) {
+            [NSNotificationCenter.defaultCenter postNotificationName:name object:nil];
+        }
+        NSCAssert(events.count == 8, @"Full-screen transitions never create an app-wide stop condition");
         [bridge stop];
         [workspace postNotificationName:NSWorkspaceWillSleepNotification object:nil];
         NSCAssert(events.count == 8, @"Stop removes observers");
@@ -63,6 +74,13 @@ int main(int argc, const char *argv[]) {
         [pointer preparePlaybackToolbarWithActivation:^(NSString *item) { NSCAssert(NO, @"No toolbar to activate"); }];
         NSCAssert(![pointer focusPlaybackToolbarBackwards:NO video:^{} browse:^{} activate:^(NSString *item) {}],
                   @"Missing scoped window never falls back to another toolbar");
+        [pointer startPlaybackChromeWithHandler:^(NSInteger event, BOOL value) { NSCAssert(NO, @"No scoped window for chrome events"); }];
+        [pointer setPlaybackToolbarControlsVisible:NO];
+        [pointer setPlaybackCursorHidden:YES];
+        [pointer setPlaybackCursorHidden:NO];
+        [pointer togglePlaybackFullScreen];
+        [pointer stopPlaybackChrome]; [pointer stopPlaybackChrome];
+        puts("PASS: chrome/cursor/fullscreen boundary rejects absent scoped windows and cleans up twice");
         puts("PASS: scoped toolbar rejects an absent window");
         puts("PASS: pointer typed boundary, monitor replacement and cleanup (event dispatch requires UI acceptance)");
         puts("PASS: secondary-click typed boundary, monitor replacement and cleanup");

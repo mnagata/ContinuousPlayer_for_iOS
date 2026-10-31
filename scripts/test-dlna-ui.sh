@@ -20,6 +20,6 @@ while [ ! -f "$output/port" ]; do
 done
 xcodebuild -project ContinuousPlayer_for_iOS.xcodeproj -scheme DeviceValidation \
     -destination "platform=iOS Simulator,id=$SIMULATOR_ID" \
-    -derivedDataPath /tmp/ContinuousPlayer-DLNA-build \
+    -derivedDataPath "${DERIVED_DATA_PATH:-/tmp/ContinuousPlayer-DLNA-build}" \
     -only-testing:"${ONLY_TESTING:-DeviceUITests/DLNAUITests}" \
     -parallel-testing-enabled NO test CODE_SIGNING_ALLOWED=NO

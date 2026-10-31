@@ -12,6 +12,8 @@ struct FileSelectionScreen: View {
     @FocusState private var focusID: String?
     @AccessibilityFocusState private var accessibilityFocusID: String?
     @State private var nativeViewport = ListViewport()
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
+    private var rowLines: Int { verticalSizeClass == .compact ? 1 : 2 }
     private enum Removal: Identifiable {
         case local(RegisteredLocalFolder), dlna(RegisteredDLNAFolder)
         var id: String {
@@ -167,13 +169,19 @@ struct FileSelectionScreen: View {
                 // Discovery permits manual input; the connection task owns its own disabled state.
                 .disabled(false)
         case .folder:
+            let duplicateNames = MediaDisplayName.collisions(in: flow.rows.filter { !$0.isFolder }.map(\.name))
             List {
                 if let error = flow.error { Text(error).foregroundStyle(.orange) }
                 ForEach(flow.rows) { row in
                     Button { flow.activate(row) } label: {
                         HStack(spacing: 16) {
                             Image(systemName: row.isFolder ? "folder.fill" : "play.circle").foregroundStyle(.cyan).frame(width: 28)
-                            Text(displayName(row)).lineLimit(3).frame(maxWidth: .infinity, alignment: .leading)
+                            Text(displayName(row)).lineLimit(rowLines).truncationMode(.tail).frame(maxWidth: .infinity, alignment: .leading)
+                            if !row.isFolder, duplicateNames.contains(displayName(row)), let format = MediaDisplayName.format(row.name) {
+                                Text(format).font(.caption.monospaced()).padding(.horizontal, 6).padding(.vertical, 3)
+                                    .background(.white.opacity(0.12), in: RoundedRectangle(cornerRadius: 4))
+                                    .accessibilityLabel("形式 " + format)
+                            }
                             if row.isFolder { Image(systemName: "chevron.right").foregroundStyle(.cyan) }
                         }.padding(.vertical, 8).contentShape(Rectangle())
                     }
@@ -193,6 +201,7 @@ struct FileSelectionScreen: View {
                     #endif
                     .accessibilityIdentifier(row.isFolder ? folderID(row) : "selection.file.\(row.id)")
                     .accessibilityLabel(row.isFolder ? row.name : fileLabel(row))
+                    .help(row.name)
                 }
                 if flow.rows.isEmpty && !flow.isLoading && flow.error == nil {
                     Text("この階層には再生対象のファイルがありません。").foregroundStyle(.secondary)
@@ -284,7 +293,7 @@ struct FileSelectionScreen: View {
         .background(FileBrowserColors.background)
     }
     private var cancelButton: some View {
-        Button(flow.page == .saved && flow.origin == .home ? "閉じる" : "キャンセル", role: .cancel) { flow.cancelPage() }
+        Button("キャンセル", role: .cancel) { flow.cancelPage() }
             .focused($focusID, equals: "selection.cancel")
             .fileBrowserCancelShortcut()
             .accessibilityIdentifier(cancelID)
@@ -295,8 +304,8 @@ struct FileSelectionScreen: View {
             HStack(spacing: 16) {
                 Image(systemName: icon).foregroundStyle(.cyan).frame(width: 28)
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(name).lineLimit(3)
-                    if let detail { Text(detail).font(.caption).foregroundStyle(.secondary).lineLimit(2) }
+                    Text(name).lineLimit(rowLines).truncationMode(.tail)
+                    if let detail { Text(detail).font(.caption).foregroundStyle(.secondary).lineLimit(rowLines) }
                 }.frame(maxWidth: .infinity, alignment: .leading)
                 Image(systemName: "chevron.right").foregroundStyle(.cyan)
             }.padding(.vertical, 10).contentShape(Rectangle())
@@ -397,10 +406,9 @@ struct FileSelectionScreen: View {
         }
     }
     #endif
-    private func fileLabel(_ row: SelectionRow) -> String { row.remote == nil ? "\(displayName(row))を選択" : "\(row.name)から連続再生" }
+    private func fileLabel(_ row: SelectionRow) -> String { row.remote == nil ? "\(row.name)を選択" : "\(row.name)から連続再生" }
     private func displayName(_ row: SelectionRow) -> String {
-        // DLNA display-name/badge unification is a later stage.
-        row.remote == nil && !row.isFolder ? URL(fileURLWithPath: row.name).deletingPathExtension().lastPathComponent : row.name
+        row.isFolder ? row.name : MediaDisplayName.title(row.name)
     }
 }
 

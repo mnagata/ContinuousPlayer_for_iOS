@@ -97,7 +97,7 @@ final class DeviceUITests: XCTestCase {
     func testNaturalAdvanceAndEnd() {
         launchFixtures()
         app.buttons["3、実機テスト OP2.wavから再生"].tap()
-        XCTAssertTrue(app.staticTexts["最後まで再生しました"].waitForExistence(timeout: 20))
+        XCTAssertTrue(app.staticTexts["このフォルダーの再生が終了しました。"].waitForExistence(timeout: 20))
         XCTAssertTrue(app.staticTexts["実機テスト ED2.wav"].firstMatch.exists)
         XCTAssertFalse(app.buttons["次のファイル"].isEnabled)
         capture("ipad-playlist-ended")
@@ -136,7 +136,7 @@ final class DeviceUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["実機テスト ED2.wav"].firstMatch.waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["一時停止"].firstMatch.exists)
         app.buttons["10秒進める"].firstMatch.tap()
-        XCTAssertFalse(app.staticTexts["最後まで再生しました"].exists)
+        XCTAssertFalse(app.staticTexts["このフォルダーの再生が終了しました。"].exists)
         app.buttons["10秒戻す"].firstMatch.tap()
         capture("ipad-gesture-seek-boundary")
     }
@@ -153,7 +153,7 @@ final class DeviceUITests: XCTestCase {
         app.launch()
         XCTAssertTrue(app.buttons["home.select"].waitForExistence(timeout: 10))
         openSavedFolder(named: "UIFixtures")
-        let file = app.buttons["実機テスト OPを選択"]
+        let file = app.buttons["実機テスト OP.wavを選択"]
         XCTAssertTrue(file.waitForExistence(timeout: 15)); file.tap()
         XCTAssertTrue(app.buttons["一時停止"].firstMatch.waitForExistence(timeout: 10))
         capture("separate-authorization-restored-playback")
@@ -168,7 +168,7 @@ final class DeviceUITests: XCTestCase {
         app.buttons["ホームに戻る"].tap()
         XCTAssertTrue(app.buttons["home.select"].waitForExistence(timeout: 5))
         openSavedFolder(named: "UIFixtures")
-        let file = app.buttons["実機テスト OPを選択"]
+        let file = app.buttons["実機テスト OP.wavを選択"]
         XCTAssertTrue(file.waitForExistence(timeout: 10))
         file.tap()
         XCTAssertTrue(app.buttons["一時停止"].firstMatch.waitForExistence(timeout: 10))
@@ -183,7 +183,7 @@ final class DeviceUITests: XCTestCase {
         app.buttons["一時停止"].firstMatch.tap()
         XCTAssertTrue(app.buttons["再生"].firstMatch.waitForExistence(timeout: 5))
 
-        app.buttons["OP / EDを選び直す"].tap()
+        app.buttons["ファイル一覧"].tap()
         XCTAssertTrue(app.buttons["picker.cancel"].waitForExistence(timeout: 10))
         capture("paused-player-folder-overlay")
 
@@ -199,17 +199,17 @@ final class DeviceUITests: XCTestCase {
         XCTAssertTrue(app.buttons["一時停止"].firstMatch.waitForExistence(timeout: 10))
         app.buttons["一時停止"].firstMatch.tap()
         XCTAssertTrue(app.buttons["ホームに戻る"].waitForExistence(timeout: 5))
-        app.buttons["OP / EDを選び直す"].tap()
+        app.buttons["ファイル一覧"].tap()
         let subfolder = app.buttons["SecondPlaylist"]
         XCTAssertTrue(subfolder.waitForExistence(timeout: 20))
         subfolder.tap()
-        let file = app.buttons["別フォルダー OPを選択"]
+        let file = app.buttons["別フォルダー OP.wavを選択"]
         XCTAssertTrue(file.waitForExistence(timeout: 10))
         file.tap()
         XCTAssertTrue(app.buttons["一時停止"].firstMatch.waitForExistence(timeout: 10))
         app.buttons["一時停止"].firstMatch.tap()
         XCTAssertTrue(app.buttons["ホームに戻る"].waitForExistence(timeout: 5))
-        app.buttons["OP / EDを選び直す"].tap()
+        app.buttons["ファイル一覧"].tap()
         XCTAssertTrue(file.waitForExistence(timeout: 20), "Reopen the playing subfolder, not the authorized parent")
         XCTAssertFalse(subfolder.exists)
         capture("reopened-current-subfolder")
@@ -262,7 +262,7 @@ final class DeviceUITests: XCTestCase {
         XCTAssertTrue(started, "MP4 tap must start playback")
         app.buttons["一時停止"].firstMatch.tap()
         XCTAssertTrue(app.buttons["ホームに戻る"].waitForExistence(timeout: 5))
-        app.buttons["OP / EDを選び直す"].tap()
+        app.buttons["ファイル一覧"].tap()
         XCTAssertTrue(app.buttons[selectedIdentifier].waitForExistence(timeout: 20),
                       "USB picker must reopen the directory containing the playing file")
         capture("usb-current-directory-reopened")

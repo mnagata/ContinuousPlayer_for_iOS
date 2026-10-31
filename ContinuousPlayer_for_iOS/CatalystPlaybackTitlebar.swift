@@ -5,23 +5,40 @@ import UIKit
 /// Owns the native title and toolbar only for the lifetime of this window's player.
 struct CatalystPlaybackTitlebar: UIViewControllerRepresentable {
     let filename: String
-    let isPlaying: Bool
+    let status: String?
+    let controlsVisible: Bool
+    let fullScreen: Bool
+    let cursorHidden: Bool
     let actionsEnabled: Bool
-    let playbackEnabled: Bool
     let home: () -> Void
     let chooseFolder: () -> Void
     let showInfo: () -> Void
-    let togglePlayback: () -> Void
+    let onPointerActivity: () -> Void
+    let onFullScreenChange: (Bool) -> Void
+    let onToolbarFocusChange: (Bool) -> Void
+    let onToolbarHoverChange: (Bool) -> Void
+    let onToolbarExit: (Bool) -> Void
+    let onWindowMinimizedChange: (Bool) -> Void
 
     final class Controller: UIViewController, NSToolbarDelegate {
         var configuration: CatalystPlaybackTitlebar? {
-            didSet { updateTitlebar() }
+            didSet { scheduleTitlebarUpdate() }
         }
+
+        private var pendingUpdate: Task<Void, Never>?
+        private func scheduleTitlebarUpdate() {
+            pendingUpdate?.cancel()
+            pendingUpdate = Task { @MainActor [weak self] in
+                await Task.yield()
+                if !Task.isCancelled { self?.updateTitlebar() }
+            }
+        }
+        func cancelPendingUpdate() { pendingUpdate?.cancel(); pendingUpdate = nil }
 
         private static let homeID = NSToolbarItem.Identifier("playback.home")
         private static let folderID = NSToolbarItem.Identifier("playback.folder")
         private static let infoID = NSToolbarItem.Identifier("playback.info")
-        private static let playID = NSToolbarItem.Identifier("playback.playPause")
+        private static let fullScreenID = NSToolbarItem.Identifier("playback.fullScreen")
         private let toolbarIdentifier = "ContinuousPlayer.Playback.\(UUID().uuidString)"
         private let keyboardBridge = MacPlaybackWindowPolicy.makeBridge()
         private weak var scene: UIWindowScene?
@@ -48,6 +65,7 @@ struct CatalystPlaybackTitlebar: UIViewControllerRepresentable {
         override func viewDidAppear(_ animated: Bool) {
             super.viewDidAppear(animated)
             updateTitlebar()
+            DispatchQueue.main.async { [weak self] in self?.updateTitlebar() }
         }
 
         private func updateTitlebar() {
@@ -63,31 +81,50 @@ struct CatalystPlaybackTitlebar: UIViewControllerRepresentable {
                 titlebar.toolbarStyle = .unifiedCompact
                 titlebar.autoHidesToolbarInFullScreen = true
                 titlebar.toolbar = playbackToolbar
-                playbackToolbar.isVisible = true
+                keyboardBridge?.setPlaybackToolbarIdentifier(toolbarIdentifier)
+
             }
 
-            let name = configuration.filename as NSString
-            let displayName = MediaScanner.extensions.contains(name.pathExtension.lowercased())
-                ? name.deletingPathExtension : configuration.filename
-            let title = displayName.isEmpty ? "ContinuousPlayer" : displayName
+            let name = MediaDisplayName.title(configuration.filename)
+            let title = (name.isEmpty ? "ContinuousPlayer" : name) + (configuration.status.map { " · " + $0 } ?? "")
+            // Full screen uses the same in-content top bar as the other platforms.
+            // Never show duplicate toolbar actions there.
+            playbackToolbar.isVisible = !configuration.fullScreen
+            titlebar.autoHidesToolbarInFullScreen = true
+            keyboardBridge?.setPlaybackCursorHidden(configuration.cursorHidden)
+            keyboardBridge?.setPlaybackToolbarExitHandler(configuration.onToolbarExit)
             windowScene.title = title
             appliedTitle = title
             for item in playbackToolbar.items { configure(item) }
             keyboardBridge?.setPlaybackToolbarIdentifier(toolbarIdentifier)
             keyboardBridge?.preparePlaybackToolbar { [weak self] identifier in
-                guard let self, self.view.window?.isKeyWindow == true, let config = self.configuration, config.actionsEnabled else { return }
+                guard let self, let config = self.configuration, config.actionsEnabled else { return }
                 switch identifier {
                 case "playback.home": config.home()
                 case "playback.folder": config.chooseFolder()
                 case "playback.info": config.showInfo()
-                case "playback.playPause": if config.playbackEnabled { config.togglePlayback() }
+                case "playback.fullScreen": self.keyboardBridge?.togglePlaybackFullScreen()
                 default: break
                 }
             }
+            keyboardBridge?.startPlaybackChrome { [weak self] kind, value in
+                guard let config = self?.configuration else { return }
+                switch kind {
+                case 0: config.onPointerActivity()
+                case 1: config.onFullScreenChange(value)
+                case 2: config.onToolbarFocusChange(value)
+                case 3: config.onToolbarHoverChange(value)
+                case 4: config.onWindowMinimizedChange(value)
+                default: break
+                }
+            }
+            keyboardBridge?.setPlaybackToolbarControlsVisible(configuration.controlsVisible)
         }
 
         func restoreTitlebar(restoringHome: Bool = false) {
+            keyboardBridge?.stopPlaybackChrome()
             if let scene {
+                configuration?.onWindowMinimizedChange(false)
                 if restoringHome { scene.title = "ContinuousPlayer" }
                 else if scene.title == appliedTitle { scene.title = previousTitle }
                 if let titlebar = scene.titlebar, titlebar.toolbar === playbackToolbar {
@@ -102,7 +139,7 @@ struct CatalystPlaybackTitlebar: UIViewControllerRepresentable {
         }
 
         func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-            [Self.homeID, .flexibleSpace, Self.folderID, Self.infoID, Self.playID]
+            [.flexibleSpace, Self.homeID, Self.folderID, Self.infoID, Self.fullScreenID]
         }
 
         func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
@@ -111,7 +148,7 @@ struct CatalystPlaybackTitlebar: UIViewControllerRepresentable {
 
         func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier identifier: NSToolbarItem.Identifier,
                      willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? {
-            guard [Self.homeID, Self.folderID, Self.infoID, Self.playID].contains(identifier) else { return nil }
+            guard [Self.homeID, Self.folderID, Self.infoID, Self.fullScreenID].contains(identifier) else { return nil }
             let item = NSToolbarItem(itemIdentifier: identifier)
             item.target = self
             item.autovalidates = false
@@ -129,17 +166,17 @@ struct CatalystPlaybackTitlebar: UIViewControllerRepresentable {
                 symbol = "house"
                 item.action = #selector(goHome)
             case Self.folderID:
-                label = "OP / EDを選び直す"
+                label = "ファイル一覧"
                 symbol = "folder"
                 item.action = #selector(browseFiles)
             case Self.infoID:
                 label = "メディア情報"
                 symbol = "info.circle"
                 item.action = #selector(showInfo)
-            case Self.playID:
-                label = configuration.isPlaying ? "一時停止" : "再生"
-                symbol = configuration.isPlaying ? "pause.fill" : "play.fill"
-                item.action = #selector(togglePlayback)
+            case Self.fullScreenID:
+                label = "全画面にする"
+                symbol = "arrow.up.left.and.arrow.down.right"
+                item.action = #selector(toggleFullScreen)
             default:
                 return
             }
@@ -148,7 +185,6 @@ struct CatalystPlaybackTitlebar: UIViewControllerRepresentable {
             item.toolTip = label
             item.image = UIImage(systemName: symbol)
             item.isEnabled = configuration.actionsEnabled
-                && (item.itemIdentifier != Self.playID || configuration.playbackEnabled)
         }
 
         @objc private func goHome() {
@@ -166,9 +202,9 @@ struct CatalystPlaybackTitlebar: UIViewControllerRepresentable {
             configuration.showInfo()
         }
 
-        @objc private func togglePlayback() {
-            guard let configuration, configuration.actionsEnabled, configuration.playbackEnabled else { return }
-            configuration.togglePlayback()
+        @objc private func toggleFullScreen() {
+            guard configuration?.actionsEnabled == true else { return }
+            keyboardBridge?.togglePlaybackFullScreen()
         }
     }
 
@@ -183,6 +219,7 @@ struct CatalystPlaybackTitlebar: UIViewControllerRepresentable {
     }
 
     static func dismantleUIViewController(_ controller: Controller, coordinator: ()) {
+        controller.cancelPendingUpdate()
         controller.restoreTitlebar(restoringHome: true)
         controller.configuration = nil
     }

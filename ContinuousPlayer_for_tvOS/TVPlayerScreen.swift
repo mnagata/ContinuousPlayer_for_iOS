@@ -17,9 +17,9 @@ struct TVPlayerScreen: View {
     @Environment(\.isEnabled) private var isEnabled
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.accessibilityVoiceOverEnabled) private var voiceOver
-    private enum Focus: Hashable { case video, play }
+    private enum Focus: Hashable { case video, home, browse, info, previous, backward, play, forward, next }
     private var controlsVisible: Bool {
-        !playback.state.wantsToPlay || playback.error != nil || voiceOver
+        !playback.state.wantsToPlay || playback.error != nil || playback.mediaInfo.isAudioOnly || voiceOver
     }
 
     var body: some View {
@@ -35,13 +35,13 @@ struct TVPlayerScreen: View {
         .onDisappear {
             UIApplication.shared.isIdleTimerDisabled = false
         }
-        .task(id: [browsingFiles, showsInfo, playback.showsFailure, controlsVisible]) {
+        .task(id: [browsingFiles, showsInfo, playback.showsFailure, controlsVisible, playback.state.wantsToPlay]) {
             // The overlay can remove the native focus without changing the old
             // SwiftUI value. Clear it, then restore after controls are visible.
             focus = nil
             await Task.yield()
             guard !Task.isCancelled, !browsingFiles, !showsInfo, !playback.showsFailure else { return }
-            focus = controlsVisible ? .play : .video
+            focus = playback.state.wantsToPlay ? .video : .play
             resetFocus(in: transportScope)
         }
         .onChange(of: scenePhase) { _, phase in
@@ -57,7 +57,7 @@ struct TVPlayerScreen: View {
         }
         .sheet(isPresented: failurePresentation, onDismiss: {
             if !browsingFiles && !showsInfo {
-                focus = controlsVisible ? .play : .video
+                focus = playback.state.wantsToPlay ? .video : .play
                 resetFocus(in: transportScope)
             }
         }) {
@@ -73,10 +73,10 @@ struct TVPlayerScreen: View {
         ZStack {
             TVPlaybackSurface(player: playback.player)
                 .ignoresSafeArea()
-            if !controlsVisible && acceptsInput {
+            if (!controlsVisible || playback.mediaInfo.isAudioOnly) && acceptsInput {
                 TVRemoteInputSurface(currentName: playback.currentName, onCommand: perform)
                     .focused($focus, equals: .video)
-                    .prefersDefaultFocus(!controlsVisible, in: transportScope)
+                    .prefersDefaultFocus(playback.state.wantsToPlay, in: transportScope)
                     .onKeyPress(phases: [.down, .repeat]) { key in
                         guard acceptsInput, !key.hasCommandModifiers,
                               let command = PlaybackKeyboardInput.command(key.inputName, shift: key.modifiers.contains(.shift))
@@ -90,46 +90,88 @@ struct TVPlayerScreen: View {
                     .padding(30).background(.black.opacity(0.8), in: RoundedRectangle(cornerRadius: 18))
                     .allowsHitTesting(false)
             }
-            if controlsVisible && !browsingFiles && !showsInfo {
-                VStack(alignment: .leading, spacing: 24) {
-                    Text(playback.currentName).font(.title2.bold()).lineLimit(2)
-                    Text(folderName).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                    if playback.state.ended {
-                        Text("このフォルダーの再生が終了しました。")
-                    } else if let reason = playback.pauseReason {
-                        Text(reason).font(.callout)
-                    }
-                    HStack(spacing: 30) {
-                        Button("前の動画", systemImage: "backward.end.fill") { perform(.previous) }
-                            .disabled(!playback.state.canGoBack)
-                        Button("10秒戻す", systemImage: "gobackward.10") { perform(.backward) }
-                            .disabled(!playback.canSeek)
-                        Button(playback.state.wantsToPlay ? "一時停止" : "再生",
-                               systemImage: playback.state.wantsToPlay ? "pause.fill" : "play.fill", action: toggle)
-                            .focused($focus, equals: .play)
-                            .prefersDefaultFocus(controlsVisible, in: transportScope)
-                            .disabled(!playback.canResume)
-                            .accessibilityIdentifier("player.toggle")
-                        Button("10秒進める", systemImage: "goforward.10") { perform(.forward) }
-                            .disabled(!playback.canSeek)
-                        Button("次の動画", systemImage: "forward.end.fill") { perform(.next) }
-                            .disabled(!playback.state.canGoForward)
-                    }
-                    .labelStyle(.iconOnly)
-                    HStack(spacing: 30) {
-                        Button("一覧に戻る", action: leavePlayer)
-                            .accessibilityIdentifier("player.chooseFolder")
-                        Button("メディア情報", action: openInfo)
-                        Button("ホームに戻る") { playback.pause(); home() }
-                    }
-                    Text("方向ボタンで操作部を移動 · 決定で実行 · 戻るでファイル一覧へ")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-                .padding(48)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(.black.opacity(0.88))
-                .frame(maxHeight: .infinity, alignment: .bottom)
+            if playback.mediaInfo.isAudioOnly {
+                Image(systemName: "waveform").font(.system(size: 100)).foregroundStyle(.cyan.opacity(0.65))
+                    .allowsHitTesting(false).accessibilityHidden(true)
             }
+        }
+        .overlay(alignment: .top) {
+            if controlsVisible && !browsingFiles && !showsInfo { topBar }
+        }
+        .overlay(alignment: .bottom) {
+            if controlsVisible && !browsingFiles && !showsInfo { transport }
+        }
+    }
+
+    private var topBar: some View {
+        HStack(spacing: 28) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(MediaDisplayName.title(playback.currentName)).font(.title2.bold()).lineLimit(1).truncationMode(.tail)
+                    .help(playback.currentName).accessibilityLabel(playback.currentName).accessibilityIdentifier("player.title")
+                if playback.state.ended { Text("このフォルダーの再生が終了しました。").font(.callout).lineLimit(1) }
+                else if let reason = playback.pauseReason { Text(reason).font(.callout).lineLimit(1).truncationMode(.tail) }
+            }.frame(maxWidth: .infinity, alignment: .leading).layoutPriority(-1)
+            Button("ホームに戻る", systemImage: "house") { playback.pause(); home() }
+                .focused($focus, equals: .home).help("ホームに戻る")
+            Button("ファイル一覧", systemImage: "folder", action: leavePlayer)
+                .focused($focus, equals: .browse).accessibilityIdentifier("player.chooseFolder").help("ファイル一覧")
+            Button("メディア情報", systemImage: "info.circle", action: openInfo)
+                .focused($focus, equals: .info).help("メディア情報")
+        }
+        .onMoveCommand(perform: moveControlFocus)
+        .labelStyle(.iconOnly).padding(.horizontal, 64).padding(.vertical, 24)
+        .background { Color.black.opacity(0.85).ignoresSafeArea(edges: [.top, .horizontal]) }
+
+    }
+
+    private var transport: some View {
+        HStack(spacing: 36) {
+            Button("前のファイル", systemImage: "backward.end.fill") { perform(.previous) }
+                .focused($focus, equals: .previous).disabled(!playback.state.canGoBack || playback.needsFolderSelection)
+                .opacity(playback.state.canGoBack && !playback.needsFolderSelection ? 1 : 0.3).help("前のファイル")
+            Button("10秒戻す", systemImage: "gobackward.10") { perform(.backward) }
+                .focused($focus, equals: .backward).disabled(!playback.canSeek).opacity(playback.canSeek ? 1 : 0.3).help("10秒戻す")
+            Button(playback.state.wantsToPlay ? "一時停止" : "再生",
+                   systemImage: playback.state.wantsToPlay ? "pause.fill" : "play.fill", action: toggle)
+                .focused($focus, equals: .play)
+                .prefersDefaultFocus(!playback.state.wantsToPlay, in: transportScope)
+                .disabled(!playback.canResume).opacity(playback.canResume ? 1 : 0.3).accessibilityIdentifier("player.toggle")
+            Button("10秒進める", systemImage: "goforward.10") { perform(.forward) }
+                .focused($focus, equals: .forward).disabled(!playback.canSeek).opacity(playback.canSeek ? 1 : 0.3).help("10秒進める")
+            Button("次のファイル", systemImage: "forward.end.fill") { perform(.next) }
+                .focused($focus, equals: .next).disabled(!playback.state.canGoForward || playback.needsFolderSelection)
+                .opacity(playback.state.canGoForward && !playback.needsFolderSelection ? 1 : 0.3).help("次のファイル")
+        }
+        .onMoveCommand(perform: moveControlFocus)
+        .labelStyle(.iconOnly).padding(.vertical, 28).frame(maxWidth: .infinity)
+        .background { Color.black.opacity(0.85).ignoresSafeArea(edges: [.bottom, .horizontal]) }
+
+    }
+
+
+    private func moveControlFocus(_ direction: MoveCommandDirection) {
+        let top: [Focus] = [.home, .browse, .info]
+        var bottom: [Focus] = []
+        if playback.state.canGoBack && !playback.needsFolderSelection { bottom.append(.previous) }
+        if playback.canSeek { bottom.append(.backward) }
+        if playback.canResume { bottom.append(.play) }
+        if playback.canSeek { bottom.append(.forward) }
+        if playback.state.canGoForward && !playback.needsFolderSelection { bottom.append(.next) }
+        guard let current = focus else { return }
+        switch direction {
+        case .up where bottom.contains(current):
+            switch current {
+            case .previous, .backward: focus = .home
+            case .forward, .next: focus = .info
+            default: focus = .browse
+            }
+        case .down where top.contains(current): focus = bottom.contains(.play) ? .play : bottom.first
+        case .left, .right:
+            let row = top.contains(current) ? top : bottom
+            guard let index = row.firstIndex(of: current) else { return }
+            let next = index + (direction == .left ? -1 : 1)
+            if row.indices.contains(next) { focus = row[next] }
+        default: break
         }
     }
 

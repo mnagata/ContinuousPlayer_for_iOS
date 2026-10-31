@@ -46,11 +46,7 @@ private struct PlaybackSceneObserver: UIViewControllerRepresentable {
             guard observers.isEmpty, let scene = view.window?.windowScene else { return }
             observedScene = scene
             let center = NotificationCenter.default
-            #if targetEnvironment(macCatalyst)
-            let keepsInactive = true
-            #elseif os(tvOS)
-            let keepsInactive = false
-            #else
+            #if !os(tvOS) && !targetEnvironment(macCatalyst)
             let keepsInactive = UIDevice.current.userInterfaceIdiom == .pad
             #endif
             #if os(tvOS)
@@ -64,6 +60,21 @@ private struct PlaybackSceneObserver: UIViewControllerRepresentable {
                     MainActor.assumeIsolated { self?.session?.setSceneAllowsPlayback(allowed) }
                 })
             }
+            #elseif targetEnvironment(macCatalyst)
+            // A visible Mac window can enter a UIKit background/inactive state
+            // while moving between full-screen Spaces. Native window minimization,
+            // app Hide and workspace sleep/lock are the actual stop conditions.
+            session?.setSceneAllowsPlayback(true)
+            observers.append(center.addObserver(forName: UIScene.didActivateNotification, object: scene, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.session?.setSceneAllowsPlayback(true) }
+            })
+            observers.append(center.addObserver(forName: UIScene.didEnterBackgroundNotification, object: scene, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    // Retain the conservative fallback if the native bundle fails.
+                    guard let self, self.macLifecycle == nil else { return }
+                    self.session?.setSceneAllowsPlayback(false)
+                }
+            })
             #else
             session?.setSceneAllowsPlayback(scene.activationState == .foregroundActive ||
                 (keepsInactive && scene.activationState == .foregroundInactive))
