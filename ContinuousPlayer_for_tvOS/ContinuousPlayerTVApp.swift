@@ -34,7 +34,7 @@ private struct TVHomeContent: View {
                 .font(.headline).tracking(5).foregroundStyle(.cyan)
             Text("NASの動画を、OP / ED順に連続再生")
                 .foregroundStyle(.white.opacity(0.8))
-            Button("OP / EDを選ぶ", action: select)
+            Button("動画フォルダーを選ぶ", action: select)
                 .accessibilityIdentifier("home.chooseFolder")
                 .padding(.top, 24)
             Text("Apple TVとNASを同じネットワークに接続してください。")

@@ -24,17 +24,17 @@ private struct HomeView: View {
                             .lineLimit(1).minimumScaleFactor(0.6)
                     }
                     Button(action: select) {
-                        Label("OP / EDを選ぶ", systemImage: "folder.fill")
+                        Label("動画フォルダーを選ぶ", systemImage: "folder.fill")
                             .font(.headline).frame(maxWidth: .infinity).padding(.vertical, 18)
                             .background(LinearGradient(colors: [.teal, .indigo], startPoint: .leading, endPoint: .trailing), in: RoundedRectangle(cornerRadius: 18))
                     }
                     .buttonStyle(.plain).frame(maxWidth: 320)
                     .accessibilityIdentifier("home.select")
                     #if targetEnvironment(macCatalyst)
-                    Text("「OP / EDを選ぶ」から保存済みフォルダーの選択・追加ができます。")
+                    Text("「動画フォルダーを選ぶ」から保存済みフォルダーの選択・追加ができます。")
                         .font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center)
                     #else
-                    Text("「OP / EDを選ぶ」からフォルダーの選択・追加ができます。\n登録したフォルダーは次回も使用できます。")
+                    Text("「動画フォルダーを選ぶ」からフォルダーの選択・追加ができます。\n登録したフォルダーは次回も使用できます。")
                         .font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center)
                     #endif
                 }
