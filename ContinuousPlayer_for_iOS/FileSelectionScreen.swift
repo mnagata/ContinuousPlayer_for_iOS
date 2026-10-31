@@ -58,7 +58,14 @@ struct FileSelectionScreen: View {
                         focusID = nil
                         await Task.yield()
                         guard !Task.isCancelled else { return }
-                        if let id { proxy.scrollTo(id, anchor: .center) }
+                        if let id {
+                            #if targetEnvironment(macCatalyst)
+                            // Keep visible rows in place; scroll only far enough to reveal an offscreen selection.
+                            proxy.scrollTo(id)
+                            #else
+                            proxy.scrollTo(id, anchor: .center)
+                            #endif
+                        }
                         accessibilityFocusID = id
                         if flow.page == .saved && flow.selectedSavedID == nil { flow.selectedSavedID = id }
                         #if os(tvOS)
@@ -378,13 +385,14 @@ struct FileSelectionScreen: View {
         if name == "backspace" { if !repeating { flow.back() }; return true }
         guard let focused, navigableIDs.contains(focused),
               ["left", "right", "pageUp", "pageDown", "up", "down", "return"].contains(name) else { return false }
-        if repeating { return true }
         switch name {
         case "left", "pageUp": page(-1)
         case "right", "pageDown": page(1)
         case "up": navigate(-1)
         case "down": navigate(1)
         default:
+            // Navigation follows key repeat; activation is once per physical press.
+            if repeating { return true }
             if flow.page == .saved {
                 if let local = flow.registrations.local.first(where: { "saved.local.\($0.id)" == focused }) { flow.open(local) }
                 else if let remote = flow.registrations.dlna.first(where: { "saved.dlna.\($0.id)" == focused }) { flow.open(remote) }

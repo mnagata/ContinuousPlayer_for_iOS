@@ -14,11 +14,28 @@ struct ListKeyboardInput: UIViewRepresentable {
         var held: Set<UIKeyboardHIDUsage> = []
         var handle: ((String, Bool) -> Bool)?
         var focusTask: Task<Void, Never>?
+        private static let navigationInputs = [
+            UIKeyCommand.inputUpArrow: "up", UIKeyCommand.inputDownArrow: "down",
+            UIKeyCommand.inputLeftArrow: "left", UIKeyCommand.inputRightArrow: "right",
+            UIKeyCommand.inputPageUp: "pageUp", UIKeyCommand.inputPageDown: "pageDown"
+        ]
+        private lazy var navigationCommands: [UIKeyCommand] = Self.navigationInputs.map { input, name in
+            let command = UIKeyCommand(action: #selector(moveSelection(_:)), input: input, propertyList: name)
+            command.wantsPriorityOverSystemBehavior = true
+            command.repeatBehavior = .repeatable
+            return command
+        }
+        override var keyCommands: [UIKeyCommand]? { enabled ? navigationCommands : nil }
         override var canBecomeFirstResponder: Bool { enabled }
         override var canBecomeFocused: Bool { enabled }
         func focusList() {
-            guard enabled, window?.isKeyWindow == true else { return }
+            guard enabled, !isFirstResponder, window?.isKeyWindow == true else { return }
             becomeFirstResponder()
+        }
+        @objc private func moveSelection(_ command: UIKeyCommand) {
+            guard enabled, isFirstResponder, window?.isKeyWindow == true,
+                  let name = command.propertyList as? String else { return }
+            _ = handle?(name, false)
         }
         override func didMoveToWindow() { super.didMoveToWindow(); focusList() }
         override func didUpdateFocus(in context: UIFocusUpdateContext, with coordinator: UIFocusAnimationCoordinator) {
@@ -31,6 +48,8 @@ struct ListKeyboardInput: UIViewRepresentable {
             for press in presses {
                 guard enabled, isFirstResponder, let key = press.key,
                       key.modifierFlags.intersection([.command, .control, .alternate]).isEmpty else { continue }
+                // Navigation is owned by repeatable key commands, never both input paths.
+                if Self.navigationInputs[key.charactersIgnoringModifiers] != nil { continue }
                 let repeating = held.contains(key.keyCode)
                 if handle?(key.inputName, repeating) == true {
                     held.insert(key.keyCode); remaining.remove(press)
