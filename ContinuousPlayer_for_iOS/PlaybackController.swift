@@ -41,9 +41,24 @@ final class PlaybackController {
     private var seekTask: Task<Void, Never>?
     private let preparationLimit: Duration
     private let performSeek: (AVPlayer, CMTime) async -> Bool
+    private let activateAudio: @Sendable () async throws -> Void
+    private var manualAudioRequestRevision = 0
+    private(set) var isRequestingAudioRecovery = false
     var canSeek: Bool { !isPresenting && !isLoading && failure == nil && !seekableRanges.isEmpty }
     var canRetry: Bool { state.currentURL != nil && !isLoading && !isPresenting && isActive && !interrupted }
     var canResume: Bool { state.currentURL != nil && !isPresenting && isActive && !interrupted && (!needsFolderSelection || failure != nil) }
+    /// A user may ask the OS to reactivate audio even if no end notification arrived.
+    /// Automatic restoration still uses canResume/resume and remains blocked.
+    var canRequestPlayback: Bool {
+        guard !isRequestingAudioRecovery else { return false }
+        #if os(iOS) || os(tvOS)
+        if interrupted {
+            return state.currentURL != nil && isActive && !isPresenting && !isLoading &&
+                !needsFolderSelection && failure == nil && audioSessionActivation == nil
+        }
+        #endif
+        return canResume
+    }
 
     struct PresentationSnapshot {
         let id: UUID
@@ -117,15 +132,40 @@ final class PlaybackController {
     init(preparationLimit: Duration = .seconds(30),
          seek: @escaping (AVPlayer, CMTime) async -> Bool = {
              await $0.seek(to: $1, toleranceBefore: .zero, toleranceAfter: .zero)
+         }, activateAudio: @escaping @Sendable () async throws -> Void = {
+             #if os(iOS) || os(tvOS)
+             try await Task.detached(priority: .userInitiated) {
+                 let session = AVAudioSession.sharedInstance()
+                 try session.setCategory(.playback, mode: .moviePlayback)
+                 try session.setActive(true)
+             }.value
+             #endif
          }) {
         self.preparationLimit = preparationLimit
         self.performSeek = seek
+        self.activateAudio = activateAudio
         #if os(iOS) || os(tvOS)
         let center = NotificationCenter.default
-        systemNotifications.append(center.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: .main) { [weak self] notification in
-            let began = (notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt) == AVAudioSession.InterruptionType.began.rawValue
-            MainActor.assumeIsolated { self?.setInterrupted(began) }
-        })
+        if #available(iOS 27, tvOS 27, *) {
+            let audio = AVAudioSession.sharedInstance()
+            systemNotifications.append(center.addObserver(forName: AVAudioSession.didBecomeInactiveNotification, object: audio, queue: .main) { [weak self] notification in
+                guard let context = notification.userInfo?[AVAudioSession.deactivationContextKey] as? AVAudioSession.DeactivationContext,
+                      context.source == .system else { return }
+                MainActor.assumeIsolated { self?.setInterrupted(true) }
+            })
+            systemNotifications.append(center.addObserver(forName: AVAudioSession.resumptionRecommendationNotification, object: audio, queue: .main) { [weak self] _ in
+                // A legacy interruption-end event is not guaranteed after suspension.
+                // Either recommendation permits an explicit user retry; neither
+                // restores wantsToPlay or the presentation's interruption revision.
+                MainActor.assumeIsolated { self?.setInterrupted(false) }
+            })
+        } else {
+            systemNotifications.append(center.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: .main) { [weak self] notification in
+                guard let raw = notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
+                      let type = AVAudioSession.InterruptionType(rawValue: raw) else { return }
+                MainActor.assumeIsolated { self?.setInterrupted(type == .began) }
+            })
+        }
         systemNotifications.append(center.addObserver(forName: AVAudioSession.routeChangeNotification, object: nil, queue: .main) { [weak self] notification in
             guard (notification.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt) == AVAudioSession.RouteChangeReason.oldDeviceUnavailable.rawValue else { return }
             MainActor.assumeIsolated { self?.outputDisconnected() }
@@ -159,6 +199,7 @@ final class PlaybackController {
     }
 
     func setInterrupted(_ value: Bool) {
+        logger.notice("Audio interruption blocked=\(value)")
         interrupted = value
         if value {
             interruptionRevision += 1
@@ -166,7 +207,7 @@ final class PlaybackController {
             invalidateAudioSession()
             #endif
             pause()
-            pauseReason = "音声の割り込みで停止しました。割り込み終了後、手動で再開してください。"
+            pauseReason = "音声の割り込みで停止しました。再生ボタンで再開を試せます。"
         }
     }
 
@@ -202,20 +243,37 @@ final class PlaybackController {
         audioSessionReady = false
     }
 
-    private func activateAudioSession() {
+    private func activateAudioSession(recoveringInterruption: Bool = false) {
         guard audioSessionActivation == nil else { return }
         let sessionGeneration = audioSessionGeneration
+        let session = sessionRevision, item = generation, presentation = presentationRevision
+        let request = manualAudioRequestRevision
+        isRequestingAudioRecovery = recoveringInterruption
         audioSessionActivation = Task { [weak self] in
-            // These synchronous AVAudioSession calls can block, especially on Catalyst.
-            let result = await Task.detached(priority: .userInitiated) { () -> Result<Void, Error> in
-                Result {
-                    let session = AVAudioSession.sharedInstance()
-                    try session.setCategory(.playback, mode: .moviePlayback)
-                    try session.setActive(true)
-                }
-            }.value
+            guard let activation = self?.activateAudio else { return }
+            let result: Result<Void, Error>
+            do { try await activation(); result = .success(()) }
+            catch { result = .failure(error) }
             guard let self else { return }
             self.audioSessionActivation = nil
+            self.isRequestingAudioRecovery = false
+            if recoveringInterruption {
+                // A delayed success cannot outlive this explicit Play action.
+                guard !Task.isCancelled, self.audioSessionGeneration == sessionGeneration,
+                      self.sessionRevision == session, self.generation == item,
+                      self.presentationRevision == presentation, self.manualAudioRequestRevision == request,
+                      self.isActive, !self.isPresenting, !self.needsFolderSelection, self.failure == nil else { return }
+                switch result {
+                case .success:
+                    self.setInterrupted(false)
+                    self.audioSessionReady = true
+                    self.resume()
+                case .failure(let error):
+                    self.pauseReason = "音声出力を再開できません。割り込みが終了してから、再生ボタンで再試行してください。"
+                    self.logger.error("Manual audio activation failed: \(error.localizedDescription)")
+                }
+                return
+            }
             guard self.audioSessionGeneration == sessionGeneration else {
                 if self.state.wantsToPlay { self.startPlayback() }
                 return
@@ -287,7 +345,19 @@ final class PlaybackController {
         }
     }
 
+    func resumeFromUserAction() {
+        guard canRequestPlayback else { return }
+        #if os(iOS) || os(tvOS)
+        if interrupted {
+            activateAudioSession(recoveringInterruption: true)
+            return
+        }
+        #endif
+        resume()
+    }
+
     func pause() {
+        manualAudioRequestRevision += 1
         confirmPosition()
         state.wantsToPlay = false
         // Preparation already keeps rate at zero; do not interrupt its preroll.
@@ -577,6 +647,9 @@ final class PlaybackController {
     }
 
     isolated deinit {
+        #if os(iOS) || os(tvOS)
+        audioSessionActivation?.cancel()
+        #endif
         seekTask?.cancel()
         preparation?.cancel()
         player.cancelPendingPrerolls()

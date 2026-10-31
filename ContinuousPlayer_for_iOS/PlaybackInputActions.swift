@@ -21,7 +21,7 @@ import SwiftUI
         case .home: home()
         }
     }
-    private func play() { if playback.failure != nil { retry() } else { playback.resume() } }
+    private func play() { if playback.failure != nil { retry() } else { playback.resumeFromUserAction() } }
 }
 
 extension KeyPress {

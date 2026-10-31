@@ -41,6 +41,18 @@ private struct PlaybackSceneObserver: UIViewControllerRepresentable {
 
         override func loadView() { view = UIView(); view.isUserInteractionEnabled = false }
 
+        #if !os(tvOS) && !targetEnvironment(macCatalyst)
+        private func refreshSceneAvailability() {
+            guard let scene = observedScene else { return }
+            // Reconcile current OS state on foreground entry as well as listening
+            // for edges: protected-data notifications may occur while suspended.
+            session?.setBlocked("protected-data", !UIApplication.shared.isProtectedDataAvailable)
+            let visible = scene.activationState == .foregroundActive ||
+                (UIDevice.current.userInterfaceIdiom == .pad && scene.activationState == .foregroundInactive)
+            session?.setSceneAllowsPlayback(visible)
+        }
+        #endif
+
         override func viewDidAppear(_ animated: Bool) {
             super.viewDidAppear(animated)
             guard observers.isEmpty, let scene = view.window?.windowScene else { return }
@@ -76,12 +88,14 @@ private struct PlaybackSceneObserver: UIViewControllerRepresentable {
                 }
             })
             #else
-            session?.setSceneAllowsPlayback(scene.activationState == .foregroundActive ||
-                (keepsInactive && scene.activationState == .foregroundInactive))
+            refreshSceneAvailability()
             // Observe the actual window scene even while the owning home view is
             // covered by a player/picker. A covered view's environment can lag.
             observers.append(center.addObserver(forName: UIScene.didActivateNotification, object: scene, queue: .main) { [weak self] _ in
-                MainActor.assumeIsolated { self?.session?.setSceneAllowsPlayback(true) }
+                MainActor.assumeIsolated { self?.refreshSceneAvailability() }
+            })
+            observers.append(center.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.refreshSceneAvailability() }
             })
             observers.append(center.addObserver(forName: UIScene.didEnterBackgroundNotification, object: scene, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated { self?.session?.setSceneAllowsPlayback(false) }

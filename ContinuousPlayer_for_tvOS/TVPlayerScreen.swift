@@ -35,13 +35,13 @@ struct TVPlayerScreen: View {
         .onDisappear {
             UIApplication.shared.isIdleTimerDisabled = false
         }
-        .task(id: [browsingFiles, showsInfo, playback.showsFailure, controlsVisible, playback.state.wantsToPlay]) {
+        .task(id: [browsingFiles, showsInfo, playback.showsFailure, controlsVisible, playback.state.wantsToPlay, playback.canRequestPlayback]) {
             // The overlay can remove the native focus without changing the old
             // SwiftUI value. Clear it, then restore after controls are visible.
             focus = nil
             await Task.yield()
             guard !Task.isCancelled, !browsingFiles, !showsInfo, !playback.showsFailure else { return }
-            focus = playback.state.wantsToPlay ? .video : .play
+            focus = playback.state.wantsToPlay ? .video : (playback.canRequestPlayback ? .play : .browse)
             resetFocus(in: transportScope)
         }
         .onChange(of: scenePhase) { _, phase in
@@ -109,6 +109,7 @@ struct TVPlayerScreen: View {
                 Text(MediaDisplayName.title(playback.currentName)).font(.title2.bold()).lineLimit(1).truncationMode(.tail)
                     .help(playback.currentName).accessibilityLabel(playback.currentName).accessibilityIdentifier("player.title")
                 if playback.state.ended { Text("このフォルダーの再生が終了しました。").font(.callout).lineLimit(1) }
+                else if playback.isRequestingAudioRecovery { Text("音声出力を再開しています…").font(.callout).lineLimit(1) }
                 else if let reason = playback.pauseReason { Text(reason).font(.callout).lineLimit(1).truncationMode(.tail) }
             }.frame(maxWidth: .infinity, alignment: .leading).layoutPriority(-1)
             Button("ホームに戻る", systemImage: "house") { playback.pause(); home() }
@@ -135,7 +136,7 @@ struct TVPlayerScreen: View {
                    systemImage: playback.state.wantsToPlay ? "pause.fill" : "play.fill", action: toggle)
                 .focused($focus, equals: .play)
                 .prefersDefaultFocus(!playback.state.wantsToPlay, in: transportScope)
-                .disabled(!playback.canResume).opacity(playback.canResume ? 1 : 0.3).accessibilityIdentifier("player.toggle")
+                .disabled(!playback.canRequestPlayback).opacity(playback.canRequestPlayback ? 1 : 0.3).accessibilityIdentifier("player.toggle")
             Button("10秒進める", systemImage: "goforward.10") { perform(.forward) }
                 .focused($focus, equals: .forward).disabled(!playback.canSeek).opacity(playback.canSeek ? 1 : 0.3).help("10秒進める")
             Button("次のファイル", systemImage: "forward.end.fill") { perform(.next) }
@@ -154,7 +155,7 @@ struct TVPlayerScreen: View {
         var bottom: [Focus] = []
         if playback.state.canGoBack && !playback.needsFolderSelection { bottom.append(.previous) }
         if playback.canSeek { bottom.append(.backward) }
-        if playback.canResume { bottom.append(.play) }
+        if playback.canRequestPlayback { bottom.append(.play) }
         if playback.canSeek { bottom.append(.forward) }
         if playback.state.canGoForward && !playback.needsFolderSelection { bottom.append(.next) }
         guard let current = focus else { return }

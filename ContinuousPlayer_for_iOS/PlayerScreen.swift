@@ -51,6 +51,7 @@ struct PlayerScreen: View {
     private var failureVisible: Bool { playback.showsFailure && !browsingFiles && sheet == nil }
     private var cursorHidden: Bool { chrome.usesPointer && !controlsVisible && acceptsInput }
     private var status: String? {
+        if playback.isRequestingAudioRecovery { return "音声出力を再開しています…" }
         if playback.state.ended { return "このフォルダーの再生が終了しました。" }
         if playback.error != nil { return "再生できません" }
         return playback.pauseReason
@@ -174,7 +175,7 @@ struct PlayerScreen: View {
                 .disabled(!playback.state.canGoBack || playback.needsFolderSelection)
             control("10秒戻す", "gobackward.10", id: "backward") { perform(.backward) }.disabled(!playback.canSeek)
             control(playback.state.wantsToPlay ? "一時停止" : "再生", playback.state.wantsToPlay ? "pause.fill" : "play.fill", id: "play") { perform(.toggle) }
-                .disabled(!playback.canResume).accessibilityIdentifier("player.toggle")
+                .disabled(!playback.canRequestPlayback).accessibilityIdentifier("player.toggle")
             control("10秒進める", "goforward.10", id: "forward") { perform(.forward) }.disabled(!playback.canSeek)
             control("次のファイル", "forward.end.fill", id: "next") { perform(.next) }
                 .disabled(!playback.state.canGoForward || playback.needsFolderSelection)
@@ -230,7 +231,7 @@ struct PlayerScreen: View {
         #endif
         if playback.state.canGoBack && !playback.needsFolderSelection { ids.append("previous") }
         if playback.canSeek { ids.append("backward") }
-        if playback.canResume { ids.append("play") }
+        if playback.canRequestPlayback { ids.append("play") }
         if playback.canSeek { ids.append("forward") }
         if playback.state.canGoForward && !playback.needsFolderSelection { ids.append("next") }
         guard let index = ids.firstIndex(of: id) else { return }
