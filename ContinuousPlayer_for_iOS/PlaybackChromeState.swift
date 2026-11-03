@@ -4,12 +4,13 @@ import Observation
 struct PlaybackChromePolicy {
     var paused = false
     var audioOnly = false
+    var externalPlayback = false
     var pointerAwake = false
     var hovered = false
     var focused = false
     var modal = false
     var voiceOver = false
-    var visible: Bool { paused || audioOnly || pointerAwake || hovered || focused || modal || voiceOver }
+    var visible: Bool { paused || audioOnly || externalPlayback || pointerAwake || hovered || focused || modal || voiceOver }
 }
 
 /// Frequent motion updates only the clock. Observation changes at reveal/hide,

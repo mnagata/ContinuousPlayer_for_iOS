@@ -15,6 +15,8 @@ import Foundation
         precondition(!PlaybackChromePolicy().visible, "Playing video with no interaction hides controls")
         precondition(PlaybackChromePolicy(paused: true).visible)
         precondition(PlaybackChromePolicy(audioOnly: true).visible)
+        precondition(PlaybackChromePolicy(externalPlayback: true).visible,
+                     "External video playback keeps the local transport and output picker visible")
         precondition(PlaybackChromePolicy(pointerAwake: true).visible)
         precondition(PlaybackChromePolicy(hovered: true).visible)
         precondition(PlaybackChromePolicy(focused: true).visible)

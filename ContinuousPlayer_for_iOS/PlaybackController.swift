@@ -41,6 +41,7 @@ final class PlaybackController {
     private var seekTask: Task<Void, Never>?
     private let preparationLimit: Duration
     private let performSeek: (AVPlayer, CMTime) async -> Bool
+    private let performPreroll: (AVPlayer) async -> Bool
     private let activateAudio: @Sendable () async throws -> Void
     private var manualAudioRequestRevision = 0
     private(set) var isRequestingAudioRecovery = false
@@ -132,6 +133,8 @@ final class PlaybackController {
     init(preparationLimit: Duration = .seconds(30),
          seek: @escaping (AVPlayer, CMTime) async -> Bool = {
              await $0.seek(to: $1, toleranceBefore: .zero, toleranceAfter: .zero)
+         }, preroll: @escaping (AVPlayer) async -> Bool = {
+             await $0.preroll(atRate: 1)
          }, activateAudio: @escaping @Sendable () async throws -> Void = {
              #if os(iOS) || os(tvOS)
              try await Task.detached(priority: .userInitiated) {
@@ -143,6 +146,7 @@ final class PlaybackController {
          }) {
         self.preparationLimit = preparationLimit
         self.performSeek = seek
+        self.performPreroll = preroll
         self.activateAudio = activateAudio
         #if os(iOS) || os(tvOS)
         let center = NotificationCenter.default
@@ -599,18 +603,23 @@ final class PlaybackController {
                 self.confirmedSeconds = actual
             }
             self.logger.info("Preroll started")
-            let prepared = await self.player.preroll(atRate: 1)
+            let prepared = await self.performPreroll(self.player)
             guard !Task.isCancelled, self.generation == token else { return }
             self.preparation = nil
-            guard prepared else {
-                self.recordFailure("再生データの事前読み込みに失敗しました。")
+            // A false preroll result also means cancellation (for example during
+            // an AirPlay route/item transition), not necessarily broken media.
+            // Let AVPlayer buffer on play unless the item/player actually failed.
+            guard item.status != .failed, self.player.status != .failed else {
+                self.recordFailure(item.error?.localizedDescription ?? self.player.error?.localizedDescription
+                    ?? "再生データを読み込めませんでした。")
                 return
             }
+            if !prepared { self.logger.notice("Preroll interrupted; deferring buffering to playback") }
             self.isLoading = false
             self.refreshSeekability(item)
             self.lastAdvance = .now
             self.timeout?.cancel()
-            self.logger.info("Preroll complete")
+            self.logger.info("Playback preparation complete")
             if self.state.wantsToPlay { self.startPlayback() }
         }
     }

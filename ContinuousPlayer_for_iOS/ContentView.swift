@@ -30,13 +30,6 @@ private struct HomeView: View {
                     }
                     .buttonStyle(.plain).frame(maxWidth: 320)
                     .accessibilityIdentifier("home.select")
-                    #if targetEnvironment(macCatalyst)
-                    Text("「動画フォルダーを選ぶ」から保存済みフォルダーの選択・追加ができます。")
-                        .font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center)
-                    #else
-                    Text("「動画フォルダーを選ぶ」からフォルダーの選択・追加ができます。\n登録したフォルダーは次回も使用できます。")
-                        .font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center)
-                    #endif
                 }
                 .padding(28)
                 .frame(maxWidth: .infinity, minHeight: geometry.size.height)

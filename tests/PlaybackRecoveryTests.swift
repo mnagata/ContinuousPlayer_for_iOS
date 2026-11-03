@@ -11,6 +11,20 @@ import Foundation
     func complete() { pending?.resume(returning: true); pending = nil }
 }
 
+@MainActor private final class PrerollGate {
+    var interrupted = false
+    var hold = false
+    var pending: CheckedContinuation<Bool, Never>?
+
+    func preroll(_ player: AVPlayer) async -> Bool {
+        if hold { return await withCheckedContinuation { pending = $0 } }
+        if interrupted { return false }
+        return await player.preroll(atRate: 1)
+    }
+
+    func complete() { pending?.resume(returning: false); pending = nil }
+}
+
 @main struct PlaybackRecoveryTests {
     @MainActor static func wait(_ message: String, _ predicate: () -> Bool) async throws {
         let deadline = Date().addingTimeInterval(15)
@@ -29,6 +43,8 @@ import Foundation
         let base = URL(string: CommandLine.arguments[1])!
         let folder = URL(fileURLWithPath: CommandLine.arguments[2])
         let files = ["Fixture OP.mp4", "Fixture ED.mp4"].map { folder.appendingPathComponent($0) }
+        try await testInterruptedPreroll(playlists: [files,
+            ["op", "ed"].map { base.appendingPathComponent("media/\($0).mp4") }])
         let engine = PlaybackController()
         engine.adjustVolume(by: -100)
         engine.setPlaylist(files)
@@ -163,5 +179,64 @@ import Foundation
         #endif
         print("PASS: no video track, unavailable track data, independent file size and unsupported API are distinct")
         print("Stage 3 playback recovery tests passed")
+    }
+
+    @MainActor private static func testInterruptedPreroll(playlists: [[URL]]) async throws {
+        for files in playlists {
+            let gate = PrerollGate()
+            let engine = PlaybackController(preroll: { await gate.preroll($0) })
+            engine.adjustVolume(by: -100)
+            engine.setPlaylist(files)
+            engine.commitSelection(files[0])
+            try await wait("first item starts normally") { !engine.isLoading && engine.player.rate > 0 }
+
+            gate.interrupted = true
+            NotificationCenter.default.post(name: AVPlayerItem.didPlayToEndTimeNotification, object: engine.player.currentItem!)
+            try await wait("next item completes preparation") {
+                engine.state.currentURL == files[1] && !engine.isLoading
+            }
+            precondition(engine.failure == nil,
+                         "An interrupted preroll on a healthy next item must not become a media failure")
+            try await wait("next item plays despite interrupted preroll") { engine.player.currentTime().seconds > 0 }
+            precondition(engine.state.wantsToPlay && engine.state.currentURL == files[1])
+
+            engine.pause(); engine.move(-1)
+            try await wait("paused replacement completes preparation") { !engine.isLoading }
+            precondition(engine.failure == nil && !engine.state.wantsToPlay && engine.player.rate == 0)
+
+            gate.hold = true
+            engine.resume(); engine.move(1)
+            try await wait("preroll is pending before interruption") { gate.pending != nil }
+            engine.setInterrupted(true)
+            gate.complete()
+            try await wait("interrupted preparation finishes") { !engine.isLoading }
+            precondition(engine.failure == nil && !engine.state.wantsToPlay && engine.player.rate == 0,
+                         "Preroll fallback must not undo an audio interruption")
+            engine.setInterrupted(false)
+
+            engine.move(-1)
+            try await wait("old preroll waits before replacement") { gate.pending != nil }
+            gate.hold = false
+            engine.move(1)
+            try await wait("replacement prepares independently") { !engine.isLoading }
+            let item = engine.player.currentItem
+            gate.complete()
+            try await Task.sleep(for: .milliseconds(100))
+            precondition(engine.failure == nil && engine.player.currentItem === item && engine.state.currentURL == files[1],
+                         "An obsolete preroll completion cannot fail or replace the new item")
+
+            gate.hold = true
+            engine.move(-1)
+            try await wait("preroll is pending before actual failure") { gate.pending != nil }
+            try await fail(engine)
+            let failureID = engine.failure!.id
+            gate.complete()
+            try await Task.sleep(for: .milliseconds(100))
+            precondition(engine.failure?.id == failureID && engine.player.currentItem == nil && !engine.state.wantsToPlay,
+                         "Preroll fallback must not clear a real playback failure")
+
+            engine.stopSession()
+        }
+        print("PASS: interrupted preroll permits local/HTTP next-item playback and paused preparation; interruptions, obsolete callbacks and real failures remain guarded")
     }
 }

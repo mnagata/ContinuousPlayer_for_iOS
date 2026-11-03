@@ -1,5 +1,6 @@
 import SwiftUI
 import AVFoundation
+import Combine
 import UIKit
 
 struct PlayerScreen: View {
@@ -19,6 +20,8 @@ struct PlayerScreen: View {
     @State private var nativeToolbarFocused = false
     @State private var nativeToolbarHovered = false
     @State private var navigatingControls = false
+    @State private var isExternalPlaybackActive = false
+    @State private var choosingAirPlayRoute = false
     @FocusState private var focusedControl: String?
     @State private var nativeControlFocus: String?
     @Environment(\.scenePhase) private var scenePhase
@@ -44,9 +47,9 @@ struct PlayerScreen: View {
     }
     private var controlsVisible: Bool {
         PlaybackChromePolicy(paused: playback.showsPauseControls || playback.state.ended || playback.error != nil || playback.needsFolderSelection,
-            audioOnly: playback.mediaInfo.isAudioOnly, pointerAwake: chrome.pointerAwake,
+            audioOnly: playback.mediaInfo.isAudioOnly, externalPlayback: isExternalPlaybackActive, pointerAwake: chrome.pointerAwake,
             hovered: !chrome.hoveredControls.isEmpty || nativeToolbarHovered, focused: controlFocus != nil || nativeToolbarFocused || navigatingControls,
-            modal: browsingFiles || sheet != nil || playback.showsFailure, voiceOver: voiceOver).visible
+            modal: browsingFiles || sheet != nil || playback.showsFailure || choosingAirPlayRoute, voiceOver: voiceOver).visible
     }
     private var failureVisible: Bool { playback.showsFailure && !browsingFiles && sheet == nil }
     private var cursorHidden: Bool { chrome.usesPointer && !controlsVisible && acceptsInput }
@@ -70,7 +73,14 @@ struct PlayerScreen: View {
                 #else
                 .ignoresSafeArea()
                 #endif
-            if playback.mediaInfo.isAudioOnly {
+            if isExternalPlaybackActive {
+                VStack(spacing: 12) {
+                    Image(systemName: "airplayvideo").font(.system(size: 64)).accessibilityHidden(true)
+                    Text("外部出力で再生中").font(.headline)
+                }
+                .foregroundStyle(.cyan).allowsHitTesting(false)
+                .accessibilityIdentifier("player.externalPlayback")
+            } else if playback.mediaInfo.isAudioOnly {
                 Image(systemName: "waveform").font(.system(size: 72)).foregroundStyle(.cyan.opacity(0.65))
                     .accessibilityHidden(true).allowsHitTesting(false)
             }
@@ -141,6 +151,9 @@ struct PlayerScreen: View {
         .onChange(of: playback.state.wantsToPlay) { _, playing in
             if playing { navigatingControls = false; controlFocus = nil; focusRevision += 1 }
         }
+        .onReceive(playback.player.publisher(for: \.isExternalPlaybackActive).removeDuplicates().receive(on: RunLoop.main)) {
+            isExternalPlaybackActive = $0
+        }
         .background {
             PlaybackMediaCommands(player: playback.player, name: playback.currentName,
                 enabled: acceptsInput, onCommand: perform).frame(width: 0, height: 0)
@@ -159,6 +172,26 @@ struct PlayerScreen: View {
             control("ホームに戻る", "house", id: "home", action: home)
             control("ファイル一覧", "folder", id: "browse", action: chooseFolder)
             control("メディア情報", "info.circle", id: "info", action: openInfo)
+            #if !targetEnvironment(macCatalyst)
+            AirPlayRoutePicker(prioritizesVideoDevices: !playback.mediaInfo.isAudioOnly) { presenting in
+                choosingAirPlayRoute = presenting
+                if !presenting { focusRevision += 1 }
+            }
+            .frame(width: 44, height: 44)
+            .accessibilityLabel("AirPlay出力先を選ぶ").accessibilityIdentifier("player.airplay")
+            .help("AirPlay出力先を選ぶ")
+            .focused($focusedControl, equals: "airplay")
+            .onKeyPress(keys: [.tab], phases: [.down, .repeat]) { key in
+                guard !key.hasCommandModifiers else { return .ignored }
+                if key.phase == .down { moveControlFocus(from: "airplay", backwards: key.modifiers.contains(.shift)) }
+                return .handled
+            }
+            .onHover { hovering in
+                if hovering { chrome.hoveredControls.insert("airplay"); chrome.pointerMoved() }
+                else { chrome.hoveredControls.remove("airplay") }
+            }
+            .onDisappear { chrome.hoveredControls.remove("airplay") }
+            #endif
             #if targetEnvironment(macCatalyst)
             control("全画面を解除", "arrow.down.right.and.arrow.up.left", id: "fullscreen") {
                 MacPlaybackWindowPolicy.makeBridge()?.togglePlaybackFullScreen()
@@ -223,6 +256,9 @@ struct PlayerScreen: View {
     }
     private func moveControlFocus(from id: String, backwards: Bool, tab: Bool = true) {
         var ids = ["home", "browse", "info"]
+        #if !targetEnvironment(macCatalyst)
+        ids.append("airplay")
+        #endif
         #if targetEnvironment(macCatalyst)
         if !fullScreen { ids = [] }
         #endif
@@ -239,7 +275,7 @@ struct PlayerScreen: View {
         if ids.indices.contains(next) { controlFocus = ids[next] }
         else if tab { navigatingControls = false; controlFocus = nil; focusRevision += 1 }
     }
-    private var acceptsInput: Bool { isEnabled && !browsingFiles && sheet == nil && !playback.showsFailure && scenePhase == .active }
+    private var acceptsInput: Bool { isEnabled && !browsingFiles && sheet == nil && !playback.showsFailure && !choosingAirPlayRoute && scenePhase == .active }
     private func perform(_ command: PlaybackInputCommand) {
         guard acceptsInput else { return }
         #if DEBUG
