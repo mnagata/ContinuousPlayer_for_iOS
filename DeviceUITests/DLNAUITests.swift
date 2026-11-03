@@ -113,6 +113,17 @@ final class DLNAUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["dlna.directConnectionNotice"].exists)
         let url = app.textFields["dlna.serverAddress"]
         XCTAssertTrue(url.waitForExistence(timeout: 5))
+        let connectionScreen = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        connectionScreen.name = "dlna-server-connection"
+        connectionScreen.lifetime = .keepAlways
+        add(connectionScreen)
+        XCUIDevice.shared.orientation = .landscapeLeft
+        XCTAssertTrue(url.waitForExistence(timeout: 5))
+        let landscape = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        landscape.name = "dlna-server-connection-landscape"
+        landscape.lifetime = .keepAlways
+        add(landscape)
+        XCUIDevice.shared.orientation = .portrait
         url.tap()
         if !app.keyboards.firstMatch.waitForExistence(timeout: 3) { url.tap() }
         url.typeText("http://127.0.0.1:18765/management")

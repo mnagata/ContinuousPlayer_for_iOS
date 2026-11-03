@@ -97,9 +97,9 @@ import AVFoundation
         let client = DLNAClient()
         let messages: [(URLError.Code, String)] = [
             (.cannotConnectToHost, "指定したポートに接続できません"),
-            (.timedOut, "NASからの応答がありません"),
-            (.cannotFindHost, "NASのアドレスを確認してください"),
-            (.notConnectedToInternet, "NASへのネットワーク接続を利用できません"),
+            (.timedOut, "サーバーからの応答がありません"),
+            (.cannotFindHost, "サーバーのアドレスを確認してください"),
+            (.notConnectedToInternet, "サーバーへのネットワーク接続を利用できません"),
             (.secureConnectionFailed, "HTTPS接続を確立できません")
         ]
         for (code, expected) in messages {
@@ -109,12 +109,12 @@ import AVFoundation
         }
         let managementURL = DLNAClient.descriptionURL(for: "nas:5000")!
         let managementIssue = DLNAConnectionIssue.make(error: URLError(.cannotConnectToHost), url: managementURL)
-        precondition(managementIssue.guidance.contains("DSM管理画面") && managementIssue.guidance.contains("50001"))
-        precondition(DLNAClient.managementPortHint(for: DLNAClient.descriptionURL(for: "nas:50001")!) == nil)
+        precondition(managementIssue.guidance.contains("5000"))
+        precondition(!managementIssue.guidance.contains("Synology") && !managementIssue.guidance.contains("DSM"))
         for (path, expected) in [("management", "DLNAサーバーの応答ではありません"),
                                  ("missing", "DLNAの接続先が見つかりません"),
-                                 ("denied", "NASからアクセスを拒否されました"),
-                                 ("unavailable", "NASがエラーを返しました（HTTP 503）")] {
+                                 ("denied", "サーバーからアクセスを拒否されました"),
+                                 ("unavailable", "サーバーがエラーを返しました（HTTP 503）")] {
             let target = address.appendingPathComponent(path)
             do {
                 _ = try await client.server(at: target)

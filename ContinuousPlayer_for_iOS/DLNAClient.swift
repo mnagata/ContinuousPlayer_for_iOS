@@ -26,7 +26,7 @@ nonisolated enum DLNAError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .message(let message): message
-        case .httpStatus(let status): "NASの応答エラー（HTTP \(status)）。"
+        case .httpStatus(let status): "サーバーの応答エラー（HTTP \(status)）。"
         case .notMediaServer: "接続先からDLNAメディアサーバーの情報を取得できませんでした。"
         }
     }
@@ -41,22 +41,22 @@ nonisolated struct DLNAConnectionIssue {
 
     static func make(error: Error, url: URL) -> DLNAConnectionIssue {
         let title: String
-        var guidance: String
+        let guidance: String
         let port = url.port ?? (url.scheme == "https" ? 443 : 80)
         if let failure = error as? DLNAError {
             switch failure {
             case .httpStatus(401), .httpStatus(403):
-                title = "NASからアクセスを拒否されました"
-                guidance = "メディアサーバーのDMAデバイス一覧で、この端末のアクセスが許可されているか確認してください。"
+                title = "サーバーからアクセスを拒否されました"
+                guidance = "サーバーのメディア共有設定で、この端末からのアクセスが許可されているか確認してください。"
             case .httpStatus(404):
                 title = "DLNAの接続先が見つかりません"
-                guidance = "指定したポートまたはURLのパスが違う可能性があります。Synologyでは、まずポート番号を付けずにNASのIPアドレスだけで接続してください。"
+                guidance = "指定したポートまたはURLのパスが違う可能性があります。サーバーの設定でDLNA機器情報のURLを確認してください。"
             case .httpStatus(let status):
-                title = "NASがエラーを返しました（HTTP \(status)）"
+                title = "サーバーがエラーを返しました（HTTP \(status)）"
                 guidance = "メディアサーバーの起動状態を確認して、もう一度接続してください。"
             case .notMediaServer:
                 title = "DLNAサーバーの応答ではありません"
-                guidance = "Web管理画面など、別のサービスへ接続している可能性があります。SynologyではIPアドレスだけで接続するか、DLNA用のポートを指定してください。"
+                guidance = "Web管理画面など、別のサービスへ接続している可能性があります。サーバーのDLNA機器情報のURLを指定してください。"
             case .message(let message):
                 title = "サーバー情報を読み取れません"
                 guidance = message
@@ -65,36 +65,35 @@ nonisolated struct DLNAConnectionIssue {
             switch URLError.Code(rawValue: (error as NSError).code) {
             case .cannotConnectToHost:
                 title = "指定したポートに接続できません"
-                guidance = "NASのポート \(port) に接続できませんでした。ポート番号、メディアサーバーの起動状態、NASのファイアウォールを確認してください。"
+                guidance = "サーバーのポート \(port) に接続できませんでした。ポート番号、メディアサーバーの起動状態、サーバーのファイアウォールを確認してください。"
             case .timedOut:
-                title = "NASからの応答がありません"
-                guidance = "接続がタイムアウトしました。NASのアドレス、同じWi-Fiへの接続、メディアサーバーの起動状態を確認してください。"
+                title = "サーバーからの応答がありません"
+                guidance = "接続がタイムアウトしました。サーバーのアドレス、同じネットワークへの接続、メディアサーバーの起動状態を確認してください。"
             case .cannotFindHost, .dnsLookupFailed:
-                title = "NASのアドレスを確認してください"
-                guidance = "ホスト名を見つけられませんでした。名前の入力を確認するか、NASのIPアドレスで接続してください。"
+                title = "サーバーのアドレスを確認してください"
+                guidance = "ホスト名を見つけられませんでした。名前の入力を確認するか、サーバーのIPアドレスで接続してください。"
             case .notConnectedToInternet, .dataNotAllowed:
-                title = "NASへのネットワーク接続を利用できません"
-                guidance = "NASと同じWi-Fiに接続してください。設定アプリのContinuousPlayerで「ローカルネットワーク」が許可されているかも確認してください。"
+                title = "サーバーへのネットワーク接続を利用できません"
+                guidance = "サーバーと同じネットワークに接続してください。設定アプリのContinuousPlayerで「ローカルネットワーク」が許可されているかも確認してください。"
             case .networkConnectionLost:
-                title = "NASとの接続が切れました"
-                guidance = "Wi-FiとNASの接続を確認し、もう一度接続してください。"
+                title = "サーバーとの接続が切れました"
+                guidance = "ネットワークとサーバーの接続を確認し、もう一度接続してください。"
             case .secureConnectionFailed, .serverCertificateHasBadDate, .serverCertificateUntrusted,
                  .serverCertificateHasUnknownRoot, .serverCertificateNotYetValid, .clientCertificateRejected,
                  .clientCertificateRequired:
                 title = "HTTPS接続を確立できません"
-                guidance = "接続方式または証明書を確認してください。Synologyの標準メディアサーバーはHTTPを使うため、まずIPアドレスだけで接続してください。"
+                guidance = "サーバーが対応する接続方式（http / https）と、証明書の有効性を確認してください。"
             case .appTransportSecurityRequiresSecureConnection:
                 title = "このHTTP接続は許可されていません"
-                guidance = "LAN内のNASのIPアドレスで接続してください。一般のドメイン名を使うHTTP接続は、アプリの通信設定で制限される場合があります。"
+                guidance = "LAN内のサーバーのIPアドレスで接続してください。一般のドメイン名を使うHTTP接続は、アプリの通信設定で制限される場合があります。"
             default:
-                title = "NASに接続できません"
-                guidance = "NASのアドレス、同じWi-Fiへの接続、ローカルネットワークの許可を確認して、再接続してください。"
+                title = "サーバーに接続できません"
+                guidance = "サーバーのアドレス、同じネットワークへの接続、ローカルネットワークの許可を確認して、再接続してください。"
             }
         } else {
-            title = "NASに接続できません"
+            title = "サーバーに接続できません"
             guidance = "アドレスとネットワークを確認して、もう一度接続してください。"
         }
-        if let hint = DLNAClient.managementPortHint(for: url) { guidance += "\n" + hint }
         let nsError = error as NSError
         // Do not include query tokens in copied diagnostics.
         var target = URLComponents(url: url, resolvingAgainstBaseURL: false)
@@ -182,11 +181,6 @@ nonisolated struct DLNAClient: Sendable {
         return components.url
     }
 
-    static func managementPortHint(for url: URL) -> String? {
-        guard let port = url.port, [5000, 5001].contains(port) else { return nil }
-        return "ポート \(port) は通常SynologyのDSM管理画面用です。DLNAの標準ポートは50001です。"
-    }
-
     func server(at url: URL) async throws -> DLNAServer {
         let (data, response) = try await request(URLRequest(url: url))
         do {
@@ -231,20 +225,20 @@ nonisolated struct DLNAClient: Sendable {
             let (data, _) = try await self.request(request)
             let page = try Self.parsePage(data, baseURL: server.descriptionURL)
             if let updateID, updateID != page.updateID {
-                throw DLNAError.message("NASの一覧が更新されました。もう一度読み込んでください。")
+                throw DLNAError.message("サーバーの一覧が更新されました。もう一度読み込んでください。")
             }
             updateID = page.updateID
             let fresh = page.entries.filter { seen.insert($0.id).inserted }
             entries.append(contentsOf: fresh)
             guard page.returned > 0 else {
-                guard start >= page.total else { throw DLNAError.message("NASの一覧を最後まで取得できません。再読み込みしてください。") }
+                guard start >= page.total else { throw DLNAError.message("サーバーの一覧を最後まで取得できません。再読み込みしてください。") }
                 return entries
             }
-            guard !fresh.isEmpty else { throw DLNAError.message("NASが同じ一覧を繰り返し返しました。再読み込みしてください。") }
+            guard !fresh.isEmpty else { throw DLNAError.message("サーバーが同じ一覧を繰り返し返しました。再読み込みしてください。") }
             start += page.returned
             if start >= page.total { return entries }
         }
-        throw DLNAError.message("一覧の件数が多すぎます。NAS側でフォルダーを分けてください。")
+        throw DLNAError.message("一覧の件数が多すぎます。サーバー側でフォルダーを分けてください。")
     }
 
     static func escape(_ value: String) -> String {
@@ -273,19 +267,19 @@ nonisolated struct DLNAClient: Sendable {
         let xml = try DLNAXML.parse(data)
         if let fault = xml.descendants("Fault").first {
             let detail = fault.descendants("errorDescription").first?.text ?? fault.value("faultstring")
-            throw DLNAError.message("NASが一覧取得を拒否しました: \(detail)")
+            throw DLNAError.message("サーバーが一覧取得を拒否しました: \(detail)")
         }
         guard let response = xml.descendants("BrowseResponse").first,
               let returned = Int(response.value("NumberReturned")), (0...100_000).contains(returned),
               let total = Int(response.value("TotalMatches")), total >= 0,
-              let result = response.child("Result") else { throw DLNAError.message("NASの一覧応答が不正です。") }
+              let result = response.child("Result") else { throw DLNAError.message("サーバーの一覧応答が不正です。") }
         let entries: [DLNAEntry]
         if result.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && returned == 0 {
             entries = []
         } else {
             entries = try parseEntries(Data(result.text.utf8), baseURL: baseURL)
         }
-        guard entries.count == returned else { throw DLNAError.message("NASの一覧件数が応答と一致しません。") }
+        guard entries.count == returned else { throw DLNAError.message("サーバーの一覧件数が応答と一致しません。") }
         return Page(entries: entries, returned: returned, total: total, updateID: response.value("UpdateID"))
     }
 
@@ -319,17 +313,17 @@ nonisolated struct DLNAClient: Sendable {
         request.cachePolicy = .reloadIgnoringLocalCacheData
         // Stream with a hard size bound so malformed servers cannot exhaust memory.
         let (bytes, response) = try await session.bytes(for: request)
-        guard let http = response as? HTTPURLResponse else { throw DLNAError.message("NASからHTTP応答がありません。") }
-        guard response.expectedContentLength <= 8 * 1024 * 1024 else { throw DLNAError.message("NASの応答が大きすぎます。") }
+        guard let http = response as? HTTPURLResponse else { throw DLNAError.message("サーバーからHTTP応答がありません。") }
+        guard response.expectedContentLength <= 8 * 1024 * 1024 else { throw DLNAError.message("サーバーの応答が大きすぎます。") }
         var data = Data()
         for try await byte in bytes {
             if data.count % 4096 == 0 { try Task.checkCancellation() }
-            guard data.count < 8 * 1024 * 1024 else { throw DLNAError.message("NASの応答が大きすぎます。") }
+            guard data.count < 8 * 1024 * 1024 else { throw DLNAError.message("サーバーの応答が大きすぎます。") }
             data.append(byte)
         }
         if !(200..<300).contains(http.statusCode) {
             if let xml = try? DLNAXML.parse(data), let detail = xml.descendants("errorDescription").first?.text {
-                throw DLNAError.message("NASの応答エラー: \(detail)")
+                throw DLNAError.message("サーバーの応答エラー: \(detail)")
             }
             throw DLNAError.httpStatus(http.statusCode)
         }
